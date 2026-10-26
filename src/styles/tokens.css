@@ -1,0 +1,64 @@
+/* Luma design tokens — one source for colour, type, spacing and elevation. */
+:root {
+  --bg: #fbfaf8;
+  --surface: #ffffff;
+  --surface-2: #f6f4f1;
+  --surface-3: #efece8;
+  --border: #e6e1da;
+  --border-strong: #d3ccc3;
+  --text: #1f1b24;
+  --text-2: #4a4452;
+  --text-muted: #6b6474;
+  --accent: #6b5b95;
+  --accent-hover: #5a4b82;
+  --accent-soft: #f0ecf7;
+  --accent-soft-2: #e4ddf1;
+  --accent-text: #4d3f78;
+  --on-accent: #ffffff;
+  --focus: #7c68b8;
+
+  --success: #2e7553;
+  --success-soft: #e7f3ec;
+  --warning: #8a5a0c;
+  --warning-soft: #fbf1df;
+  --danger: #a93a33;
+  --danger-soft: #fbe9e7;
+  --info: #2f5f8f;
+  --info-soft: #e8f0f8;
+  --neutral-soft: #f1efec;
+
+  --font-en: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-ar: 'Cairo', 'Segoe UI', Tahoma, sans-serif;
+  --font: var(--font-en);
+  --fs-xs: 0.75rem;
+  --fs-sm: 0.8125rem;
+  --fs-md: 0.875rem;
+  --fs-lg: 1rem;
+  --fs-xl: 1.25rem;
+  --fs-2xl: 1.5rem;
+  --lh: 1.5;
+
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --shadow-sm: 0 1px 2px rgba(31, 27, 36, 0.06);
+  --shadow: 0 2px 8px rgba(31, 27, 36, 0.08);
+  --shadow-lg: 0 12px 32px rgba(31, 27, 36, 0.16);
+
+  --sidebar-w: 232px;
+  --sidebar-w-collapsed: 64px;
+  --topbar-h: 56px;
+  --banner-h: 30px;
+}
+
+html[lang='ar'] {
+  --font: var(--font-ar);
+}
