@@ -11,11 +11,12 @@ import { ConfirmDialog, Dialog } from '@/components/overlays';
 import { useActions } from '@/layout/actions';
 import { InvoiceStatusBadge } from './InvoiceDrawer';
 import { NewInvoiceDialog } from './NewInvoiceDialog';
+import { DayClose } from './DayClose';
 import { EXPENSE_CATEGORIES, PAYMENT_METHODS } from '@shared/domain';
 import type { Paged } from '@/lib/types';
 import type { TKey } from '@/i18n/en';
 
-type Tab = 'invoices' | 'payments' | 'expenses';
+type Tab = 'invoices' | 'payments' | 'expenses' | 'close';
 
 export function BillingPage() {
   const { t } = useI18n();
@@ -26,6 +27,7 @@ export function BillingPage() {
     { id: 'invoices', label: t('bill.invoices') },
     { id: 'payments', label: t('bill.payments') },
     ...(can('expenses.manage') ? [{ id: 'expenses' as Tab, label: t('bill.expenses') }] : []),
+    ...(can('payments.record') || can('reports.financial') ? [{ id: 'close' as Tab, label: t('dc.tab') }] : []),
   ];
   return (
     <div className="page">
@@ -42,6 +44,7 @@ export function BillingPage() {
       {s.tab === 'invoices' && <Invoices s={s} set={set} />}
       {s.tab === 'payments' && <Payments s={s} set={set} />}
       {s.tab === 'expenses' && can('expenses.manage') && <Expenses s={s} set={set} />}
+      {s.tab === 'close' && (can('payments.record') || can('reports.financial')) && <DayClose />}
       {newInvoice && <NewInvoiceDialog onClose={() => setNewInvoice(false)} />}
     </div>
   );

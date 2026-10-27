@@ -2,7 +2,7 @@ import { Router, type Request } from 'express';
 import { all, camel, get, nowIso, parseJson, run, scalar, tx } from '../db/db.js';
 import { assertPatientAccess, assertPerm, can, patientScopeSql, requirePerm, type AuthUser } from '../auth.js';
 import { audit } from '../audit.js';
-import { conflict, intParam, optStr, pageParams, validate } from '../http.js';
+import { badRequest, conflict, intParam, optStr, pageParams, validate } from '../http.js';
 import { clinicToday, clinicTz } from '../settings.js';
 import { medicalSchema, patientSchema, treatmentPlanSchema } from '../../shared/schemas.js';
 import { normalizePhone } from '../../shared/domain.js';
@@ -10,6 +10,7 @@ import { ageFrom, zonedParts } from '../../shared/time.js';
 import { INVOICE_BALANCE_SQL, appointmentPaymentState, patientOutstanding } from '../services/finance.js';
 import { patientPackages } from '../services/packages.js';
 import { sessionAmendments } from '../services/sessions.js';
+import { noShowRisk, patientStats, segmentOf, vipThreshold } from '../services/insights.js';
 
 export const patientsRouter = Router();
 
@@ -38,6 +39,8 @@ function mapPatient(r: Row) {
     allowMarketing: !!r.allow_marketing,
     primaryPractitionerId: (r.primary_practitioner_id as number) ?? null,
     adminNotes: (r.admin_notes as string) ?? null,
+    source: (r.source as string) ?? null,
+    referredByPatientId: (r.referred_by_patient_id as number) ?? null,
     createdAt: r.created_at as string,
   };
 }
@@ -94,9 +97,12 @@ patientsRouter.get('/', requirePerm('patients.view'), (req, res) => {
     [nowUtc, today, ...params, pageSize, offset],
   );
   const showMoney = can(req, 'billing.view');
+  const stats = patientStats(rows.map((r) => r.id as number));
+  const vipMin = vipThreshold();
   res.json({
     items: rows.map((r) => ({
       ...mapPatient(r),
+      ...(stats.has(r.id as number) ? segmentOf(stats.get(r.id as number)!, vipMin, today) : { segment: null, lapsed: false }),
       lastVisit: r.last_visit ?? null,
       nextVisit: r.next_visit ?? null,
       outstanding: showMoney ? r.outstanding : null,
@@ -148,12 +154,22 @@ function patientParams(d: ReturnType<typeof patientSchema.parse>) {
     d.allowMarketing,
     d.primaryPractitionerId,
     d.adminNotes,
+    d.source,
+    d.source === 'referral' ? d.referredByPatientId : null,
   ];
+}
+
+/** A referral must name another existing patient. */
+function checkReferrer(d: ReturnType<typeof patientSchema.parse>, selfId: number | null) {
+  if (d.source !== 'referral' || !d.referredByPatientId) return;
+  if (d.referredByPatientId === selfId) throw badRequest('INVALID_REFERRER', 'A patient cannot refer themselves.');
+  if (!scalar<number>('SELECT COUNT(*) FROM patients WHERE id = ?', [d.referredByPatientId])) throw badRequest('INVALID_REFERRER', 'The referring patient was not found.');
 }
 
 patientsRouter.post('/', requirePerm('patients.edit'), (req, res) => {
   const user = req.user!;
   const d = validate(patientSchema, req.body);
+  checkReferrer(d, null);
   const dupes = findDuplicates(user, d.phone, d.altPhone, null);
   if (dupes.length && req.body.confirmDuplicate !== true) {
     throw conflict('POSSIBLE_DUPLICATE', 'A patient with this phone number already exists. Open the existing record, or confirm this is a different person.', {
@@ -166,8 +182,8 @@ patientsRouter.post('/', requirePerm('patients.edit'), (req, res) => {
     const r = run(
       `INSERT INTO patients(code, first_name, last_name, phone, phone_normalized, alt_phone, alt_phone_normalized, email, dob, gender, address,
          emergency_name, emergency_phone, emergency_relation, preferred_language, contact_channel, allow_reminders, allow_marketing,
-         primary_practitioner_id, admin_notes, created_at, created_by, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         primary_practitioner_id, admin_notes, source, referred_by_patient_id, created_at, created_by, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [`P-${String(n).padStart(5, '0')}`, ...patientParams(d), now, user.id, now],
     );
     audit(user, 'patient.create', { entityType: 'patient', entityId: r.id, patientId: r.id, summary: 'Patient record created', meta: { duplicateConfirmed: dupes.length > 0 } });
@@ -180,6 +196,7 @@ patientsRouter.put('/:id', requirePerm('patients.edit'), (req, res) => {
   const id = intParam(req.params.id);
   const user = assertPatientAccess(req, id);
   const d = validate(patientSchema, req.body);
+  checkReferrer(d, id);
   const dupes = findDuplicates(user, d.phone, d.altPhone, id);
   if (dupes.length && req.body.confirmDuplicate !== true) {
     throw conflict('POSSIBLE_DUPLICATE', 'Another patient already uses this phone number. Confirm this is a different person to save.', { matches: dupes });
@@ -187,7 +204,7 @@ patientsRouter.put('/:id', requirePerm('patients.edit'), (req, res) => {
   run(
     `UPDATE patients SET first_name=?, last_name=?, phone=?, phone_normalized=?, alt_phone=?, alt_phone_normalized=?, email=?, dob=?, gender=?, address=?,
        emergency_name=?, emergency_phone=?, emergency_relation=?, preferred_language=?, contact_channel=?, allow_reminders=?, allow_marketing=?,
-       primary_practitioner_id=?, admin_notes=?, updated_at=? WHERE id = ?`,
+       primary_practitioner_id=?, admin_notes=?, source=?, referred_by_patient_id=?, updated_at=? WHERE id = ?`,
     [...patientParams(d), nowIso(), id],
   );
   audit(user, 'patient.update', { entityType: 'patient', entityId: id, patientId: id, summary: 'Contact details updated' });
@@ -227,6 +244,29 @@ function recentActivity(patientId: number) {
   return [...events, ...payments, ...packages].sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 12);
 }
 
+/** Value, loyalty and attendance figures for the profile; money only for users who can see billing. */
+function patientInsights(req: Request, id: number, today: string) {
+  const s = patientStats([id]).get(id)!;
+  const seg = segmentOf(s, vipThreshold(), today);
+  const money = can(req, 'billing.view');
+  const span = s.firstVisit && s.lastVisit && s.completed >= 2 ? (new Date(s.lastVisit).getTime() - new Date(s.firstVisit).getTime()) / 86400000 : null;
+  return {
+    ...seg,
+    completedVisits: s.completed,
+    noShows: s.noShows,
+    cancellations: s.cancellations,
+    lateCancellations: s.lateCancellations,
+    firstVisit: s.firstVisit,
+    lastVisit: s.lastVisit,
+    avgIntervalDays: span !== null ? Math.round(span / (s.completed - 1)) : null,
+    attendanceRate: s.completed + s.noShows ? s.completed / (s.completed + s.noShows) : null,
+    lifetimeValue: money ? s.netPaid : null,
+    avgPerVisit: money && s.completed ? Math.round(s.netPaid / s.completed) : null,
+    noShowRisk: noShowRisk(s),
+    referrals: scalar<number>('SELECT COUNT(*) FROM patients WHERE referred_by_patient_id = ?', [id]),
+  };
+}
+
 export function patientAlerts(patientId: number) {
   const m = get<{ data: string }>('SELECT data FROM patient_medical WHERE patient_id = ?', [patientId]);
   if (!m) return { alerts: [], allergies: null, precautions: null, pregnant: 'unknown' };
@@ -253,8 +293,10 @@ patientsRouter.get('/:id', (req, res) => {
   const packages = can(req, 'packages.view') ? patientPackages(id, today) : null;
   const clinical = can(req, 'medical.view');
   if (clinical) audit(req.user, 'patient.alerts_view', { entityType: 'patient', entityId: id, patientId: id, summary: 'Clinical alerts viewed on overview', sensitive: true });
+  const referrer = p.referred_by_patient_id ? get<Row>('SELECT id, first_name, last_name, code FROM patients WHERE id = ?', [p.referred_by_patient_id]) : undefined;
   res.json({
-    patient: mapPatient(p),
+    patient: { ...mapPatient(p), referredByName: referrer ? `${referrer.first_name} ${referrer.last_name}` : null },
+    insights: patientInsights(req, id, today),
     nextAppointment: next ? camel(next) : null,
     packages: packages
       ? packages.map((x) => ({ id: x.id, nameEn: x.nameEn, nameAr: x.nameAr, state: x.state, remainingSessions: x.remainingSessions, totalSessions: x.totalSessions, expiryDate: x.expiryDate, balance: x.balance }))

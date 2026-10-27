@@ -7,7 +7,9 @@ import { useRef_ } from '@/lib/session';
 import { useI18n } from '@/i18n';
 import { Button, Callout, Checkbox, SelectField, TextArea, TextField } from '@/components/ui';
 import { Dialog } from '@/components/overlays';
+import { PatientPicker, type PatientRef } from '@/components/pickers';
 import { patientSchema } from '@shared/schemas';
+import { PATIENT_SOURCES } from '@shared/domain';
 import type { Patient } from '@/lib/types';
 
 interface Dupe {
@@ -19,7 +21,7 @@ interface Dupe {
 }
 
 export function PatientFormDialog({ patient, onCreated, onClose }: { patient?: Patient; onCreated?: (id: number) => void; onClose: () => void }) {
-  const { t, pick } = useI18n();
+  const { t, tx, pick } = useI18n();
   const ref = useRef_();
   const editing = !!patient;
   const form = useForm(
@@ -41,10 +43,15 @@ export function PatientFormDialog({ patient, onCreated, onClose }: { patient?: P
       allowMarketing: patient?.allowMarketing ?? false,
       primaryPractitionerId: (patient?.primaryPractitionerId ?? null) as number | null,
       adminNotes: patient?.adminNotes ?? '',
+      source: patient?.source ?? '',
+      referredByPatientId: (patient?.referredByPatientId ?? null) as number | null,
     },
     patientSchema,
   );
   const v = form.values;
+  const [referrer, setReferrer] = useState<PatientRef | null>(
+    patient?.referredByPatientId ? { id: patient.referredByPatientId, fullName: patient.referredByName ?? `#${patient.referredByPatientId}` } : null,
+  );
   const [confirmDuplicate, setConfirmDuplicate] = useState(false);
   const [serverDupes, setServerDupes] = useState<Dupe[] | null>(null);
   const phoneKey = useDebounced(`${v.phone}|${v.altPhone}`, 400);
@@ -183,6 +190,26 @@ export function PatientFormDialog({ patient, onCreated, onClose }: { patient?: P
               </option>
             ))}
           </SelectField>
+          <SelectField label={t('pat.source')} hint={t('pat.sourceHint')} {...field('source')}>
+            <option value="">{t('src.unknown')}</option>
+            {PATIENT_SOURCES.map((s) => (
+              <option key={s} value={s}>
+                {tx(`src.${s}`)}
+              </option>
+            ))}
+          </SelectField>
+          {v.source === 'referral' ? (
+            <PatientPicker
+              label={t('pat.referredBy')}
+              value={referrer}
+              onChange={(p) => {
+                setReferrer(p);
+                form.set('referredByPatientId', p?.id ?? null);
+              }}
+            />
+          ) : (
+            <div />
+          )}
           <Checkbox label={t('pat.allowReminders')} checked={v.allowReminders} onChange={(x) => form.set('allowReminders', x)} />
           <Checkbox label={t('pat.allowMarketing')} checked={v.allowMarketing} onChange={(x) => form.set('allowMarketing', x)} />
           <TextArea className="span-2" label={t('pat.adminNotes')} rows={2} {...field('adminNotes')} />

@@ -8,15 +8,21 @@ import {
   Camera,
   ChevronsLeft,
   ChevronsRight,
+  Command,
   CreditCard,
   LayoutDashboard,
   LogOut,
   Menu,
   MessageCircle,
+  Moon,
   Package,
+  Palette,
   Search,
   Settings,
   Sparkles,
+  Sun,
+  Sunrise,
+  TrendingUp,
   UserRound,
   Users,
 } from 'lucide-react';
@@ -27,6 +33,9 @@ import { initials, useDebounced, useOnClickOutside } from '@/lib/hooks';
 import { Button } from '@/components/ui';
 import { Dialog } from '@/components/overlays';
 import { ActionsProvider } from './actions';
+import { CommandPalette } from './CommandPalette';
+import { AppearanceDialog } from './Appearance';
+import { resolvedTheme } from '@/lib/theme';
 import type { Notification } from '@/lib/types';
 import type { Permission } from '@shared/permissions';
 import type { TKey } from '@/i18n/en';
@@ -40,11 +49,13 @@ interface NavItem {
 }
 
 const NAV: NavItem[] = [
-  { to: '/', label: 'nav.dashboard', icon: LayoutDashboard, perms: ['dashboard.view'], section: 'clinic' },
+  { to: '/my-day', label: 'nav.myDay', icon: Sunrise, perms: [], section: 'clinic' },
+  { to: '/dashboard', label: 'nav.dashboard', icon: LayoutDashboard, perms: ['dashboard.view'], section: 'clinic' },
   { to: '/appointments', label: 'nav.appointments', icon: CalendarDays, perms: ['appointments.view'], section: 'clinic' },
   { to: '/patients', label: 'nav.patients', icon: Users, perms: ['patients.view'], section: 'clinic' },
   { to: '/photos', label: 'nav.photos', icon: Camera, perms: ['photos.view'], section: 'clinic' },
   { to: '/follow-up', label: 'nav.followup', icon: MessageCircle, perms: ['followup.view'], section: 'clinic' },
+  { to: '/growth', label: 'nav.growth', icon: TrendingUp, perms: ['followup.view'], section: 'business' },
   { to: '/services', label: 'nav.services', icon: Sparkles, perms: ['packages.view', 'settings.manage'], section: 'business' },
   { to: '/billing', label: 'nav.billing', icon: CreditCard, perms: ['billing.view'], section: 'business' },
   { to: '/inventory', label: 'nav.inventory', icon: Package, perms: ['inventory.view'], section: 'business' },
@@ -65,8 +76,20 @@ export function AppShell() {
   const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [palette, setPalette] = useState(false);
+  const [appearance, setAppearance] = useState(false);
   const location = useLocation();
   useEffect(() => setMobileOpen(false), [location.pathname]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPalette((o) => !o);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   const toggle = () => {
     setCollapsed((c) => {
       try {
@@ -87,12 +110,14 @@ export function AppShell() {
         <Sidebar collapsed={collapsed} mobileOpen={mobileOpen} onToggle={toggle} />
         <div className={`backdrop ${mobileOpen ? 'open' : ''}`} onClick={() => setMobileOpen(false)} />
         <div className="main">
-          <Topbar onMenu={() => setMobileOpen(true)} />
+          <Topbar onMenu={() => setMobileOpen(true)} onPalette={() => setPalette(true)} onAppearance={() => setAppearance(true)} />
           <main id="main" className="content" tabIndex={-1}>
             <Outlet />
           </main>
         </div>
       </div>
+      <CommandPalette open={palette} onClose={() => setPalette(false)} nav={NAV} onAppearance={() => setAppearance(true)} />
+      {appearance && <AppearanceDialog onClose={() => setAppearance(false)} />}
     </ActionsProvider>
   );
 }
@@ -126,7 +151,7 @@ function DemoBanner() {
 function Sidebar({ collapsed, mobileOpen, onToggle }: { collapsed: boolean; mobileOpen: boolean; onToggle: () => void }) {
   const { t, pick } = useI18n();
   const { canAny, me } = useSession();
-  const items = NAV.filter((n) => canAny(...n.perms));
+  const items = NAV.filter((n) => !n.perms.length || canAny(...n.perms));
   const sections: ('clinic' | 'business')[] = ['clinic', 'business'];
   return (
     <aside className={`sidebar ${collapsed ? 'collapsed' : ''} ${mobileOpen ? 'mobile-open' : ''}`} aria-label={t('nav.main')}>
@@ -160,18 +185,22 @@ function Sidebar({ collapsed, mobileOpen, onToggle }: { collapsed: boolean; mobi
   );
 }
 
-function Topbar({ onMenu }: { onMenu: () => void }) {
+function Topbar({ onMenu, onPalette, onAppearance }: { onMenu: () => void; onPalette: () => void; onAppearance: () => void }) {
   const { t, lang, setLang } = useI18n();
+  const { preferences, savePreferences } = useSession();
+  const dark = resolvedTheme(preferences) === 'dark';
   return (
     <header className="topbar">
       <Button variant="ghost" className="mobile-only" icon={<Menu size={20} />} aria-label={t('nav.openMenu')} onClick={onMenu} />
       <GlobalSearch />
       <div className="topbar-actions">
+        <Button variant="ghost" className="hide-mobile" icon={<Command size={17} />} aria-label={t('cmd.title')} title={`${t('cmd.title')} (Ctrl+K)`} onClick={onPalette} />
+        <Button variant="ghost" icon={dark ? <Sun size={18} /> : <Moon size={18} />} aria-label={dark ? t('cmd.lightMode') : t('cmd.darkMode')} title={dark ? t('cmd.lightMode') : t('cmd.darkMode')} onClick={() => void savePreferences({ theme: dark ? 'light' : 'dark' })} />
         <Notifications />
         <Button variant="ghost" className="lang-switch" onClick={() => setLang(lang === 'en' ? 'ar' : 'en')} aria-label={t('top.languageLabel')} lang={lang === 'en' ? 'ar' : 'en'}>
           {lang === 'en' ? 'ع' : 'EN'}
         </Button>
-        <UserMenu />
+        <UserMenu onAppearance={onAppearance} />
       </div>
     </header>
   );
@@ -308,7 +337,7 @@ function Notifications() {
   );
 }
 
-function UserMenu() {
+function UserMenu({ onAppearance }: { onAppearance: () => void }) {
   const { me, logout } = useSession();
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -333,6 +362,16 @@ function UserMenu() {
             <div className="muted xs ltr">{me.user.email}</div>
           </div>
           <hr className="divider" style={{ margin: 0 }} />
+          <button
+            className="menu-item"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              onAppearance();
+            }}
+          >
+            <Palette size={16} aria-hidden /> {t('ap.title')}
+          </button>
           <button className="menu-item" role="menuitem" onClick={() => logout()}>
             <LogOut size={16} aria-hidden /> {t('top.signOut')}
           </button>

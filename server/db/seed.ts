@@ -4,7 +4,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { DATA_DIR, UPLOAD_DIR, closeDb, nextNumber, openDb, run, scalar, tx } from './db.js';
+import { DATA_DIR, UPLOAD_DIR, all, closeDb, nextNumber, openDb, run, scalar, tx } from './db.js';
+import { GROWTH_TEMPLATES } from './templates.js';
 import { hashPassword } from '../auth.js';
 import { invalidateSettings } from '../settings.js';
 import { DEFAULT_ROLE_PERMISSIONS, ROLES, type Role } from '../../shared/permissions.js';
@@ -83,6 +84,8 @@ const USERS: { key: string; name: string; email: string; role: Role }[] = [
   { key: 'karim', name: 'Dr. Karim Fathy', email: 'dr.karim@luma.demo', role: 'practitioner' },
   { key: 'salma', name: 'Salma Youssef', email: 'salma@luma.demo', role: 'practitioner' },
   { key: 'acc', name: 'Hany Mostafa', email: 'accounts@luma.demo', role: 'accountant' },
+  { key: 'assist', name: 'Rehab Samir', email: 'assistant@luma.demo', role: 'assistant' },
+  { key: 'calls', name: 'Nada Fouad', email: 'callcenter@luma.demo', role: 'call_center' },
 ];
 
 const QUALIFICATIONS = [
@@ -1125,6 +1128,71 @@ export function seedDemo(): void {
       return st;
     }
 
+    // Patients who stopped coming (visits 4–9 months ago, before the generated history), so the
+    // win-back list has people to show. Deterministic — no random draws — so the data generated
+    // after this point is unchanged.
+    const LAPSED = [
+      { first: 'Nevine', female: true, last: 'Abaza', svc: 'body', prac: 'nour', visits: 4 },
+      { first: 'Yomna', female: true, last: 'Fakhry', svc: 'hydra', prac: 'salma', visits: 5 },
+      { first: 'Laila', female: true, last: 'Sorour', svc: 'legs', prac: 'karim', visits: 3 },
+      { first: 'Hadeer', female: true, last: 'Ezzat', svc: 'peel', prac: 'nour', visits: 3 },
+      { first: 'Karim', female: false, last: 'Abdelaziz', svc: 'acne', prac: 'karim', visits: 2 },
+      { first: 'Sohila', female: true, last: 'Mekky', svc: 'cleansing', prac: 'salma', visits: 4 },
+      { first: 'Nadia', female: true, last: 'Ghoneim', svc: 'bikini', prac: 'salma', visits: 2 },
+      { first: 'Marwan', female: false, last: 'Kassem', svc: 'face_laser', prac: 'nour', visits: 3 },
+    ];
+    const LAPSED_SETTINGS: Record<string, { label: string; value: string }[]> = {
+      laser: [{ label: 'Fluence', value: '18 J/cm²' }, { label: 'Spot size', value: '15 mm' }, { label: 'Pulse width', value: '10 ms' }],
+      hydra: [{ label: 'Tip', value: 'Blue (normal skin)' }],
+      peel: [{ label: 'Agent', value: 'Glycolic acid 30%' }, { label: 'Contact time', value: '3 min' }],
+    };
+    LAPSED.forEach((lp, i) => {
+      const svc = svcByKey[lp.svc];
+      const firstDay = -(150 + i * 3 + (lp.visits - 1) * 28);
+      const registered = iso(addDays(today, firstDay - 2), '12:00');
+      const n = (scalar<number>('SELECT COALESCE(MAX(id), 0) FROM patients') ?? 0) + 1;
+      const phone = `0120556${String(1000 + i * 37).padStart(4, '0')}`;
+      const pid = run(
+        `INSERT INTO patients(code, first_name, last_name, phone, phone_normalized, gender, preferred_language, contact_channel, allow_reminders, allow_marketing,
+           primary_practitioner_id, created_at, created_by, updated_at) VALUES (?,?,?,?,?,?,?,?,1,?,?,?,?,?)`,
+        [`P-${String(n).padStart(5, '0')}`, lp.first, lp.last, phone, normalizePhone(phone), lp.female ? 'female' : 'male', i % 3 ? 'ar' : 'en', 'whatsapp', i % 2, pracId[lp.prac], registered, userId.rec1, registered],
+      ).id;
+      for (const k of ['data_processing', 'treatment']) {
+        const c = consentTitle[k];
+        run("INSERT INTO consents(patient_id, template_id, type, template_version, title_en, title_ar, status, method, recorded_by, recorded_at) VALUES (?,?,?,1,?,?, 'granted', 'paper_signed', ?, ?)", [
+          pid,
+          consentTpl[k],
+          c.type,
+          c.en,
+          c.ar,
+          userId.rec1,
+          registered,
+        ]);
+      }
+      for (let v = 0; v < lp.visits; v++) {
+        const date = addDays(today, firstDay + v * 28);
+        const start = iso(date, `${12 + (i % 4)}:00`);
+        const end = addMin(start, svc.dur);
+        const device = svc.devices.length ? deviceId[svc.devices[0]] : null;
+        const pracUser = userId[lp.prac];
+        const apptId = run(
+          `INSERT INTO appointments(patient_id, service_id, practitioner_id, room_id, device_id, start_at, end_at, block_start, block_end, buffer_before_min, buffer_after_min,
+             status, arrived_at, started_at, completed_at, created_by, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?, 'completed', ?,?,?,?,?,?)`,
+          [pid, svcId[lp.svc], pracId[lp.prac], roomId[svc.rooms[0]], device, start, end, addMin(start, -svc.before), addMin(end, svc.after), svc.before, svc.after, addMin(start, -10), start, end, userId.rec1, addMin(start, -7 * 24 * 60), end],
+        ).id;
+        run("INSERT INTO appointment_events(appointment_id, kind, to_status, created_by, created_at) VALUES (?, 'created', 'booked', ?, ?)", [apptId, userId.rec1, addMin(start, -7 * 24 * 60)]);
+        run("INSERT INTO appointment_events(appointment_id, kind, from_status, to_status, created_by, created_at) VALUES (?, 'status', 'in_treatment', 'completed', ?, ?)", [apptId, pracUser, end]);
+        const ndef = notes[svc.kind];
+        run(
+          `INSERT INTO treatment_sessions(appointment_id, patient_id, practitioner_id, service_id, status, body_areas, assessment, treatment_notes, device_id, device_settings,
+             aftercare, created_by, created_at, updated_by, updated_at, completed_by, completed_at, completion_key) VALUES (?,?,?,?, 'completed', ?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [apptId, pid, pracId[lp.prac], svcId[lp.svc], JSON.stringify(svc.areas), ndef.assessment('III'), ndef.treatment[0], device, JSON.stringify(LAPSED_SETTINGS[svc.kind] ?? []), aftercareText[svc.kind] ?? null, pracUser, start, pracUser, end, pracUser, end, key()],
+        );
+        const inv = serviceInvoice(pid, apptId, lp.svc, end, userId.rec1);
+        payments.push({ inv, amount: EGP(svc.price), method: v % 2 ? 'cash' : 'card', kind: 'payment', at: addMin(end, 5), by: userId.rec1, refunds: [] });
+      }
+    });
+
     // Persist financial documents in chronological order so numbering reads naturally.
     invoices.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     for (const inv of invoices) {
@@ -1338,6 +1406,71 @@ export function seedDemo(): void {
         key(),
       ]);
     }
+    // Growth features (generated last so the history above stays identical) --------------------------
+    for (const g of GROWTH_TEMPLATES) {
+      run('INSERT INTO message_templates(kind, name, body_en, body_ar, active, created_by, created_at, updated_at) VALUES (?,?,?,?,1,?,?,?)', [g.kind, g.name, g.en, g.ar, userId.owner, created0, created0]);
+    }
+
+    // Marketing attribution: older records sometimes predate tracking (left empty).
+    const byCreated = all<{ id: number; created_at: string }>('SELECT id, created_at FROM patients ORDER BY created_at');
+    byCreated.forEach((p, i) => {
+      if (i < 8 || chance(0.06)) return;
+      const source = weighted<string>([['instagram', 30], ['facebook', 17], ['tiktok', 11], ['google', 10], ['website', 5], ['referral', 15], ['doctor_referral', 4], ['walk_in', 6], ['other', 2]]);
+      const referrer = source === 'referral' ? byCreated[int(0, i - 1)].id : null;
+      run('UPDATE patients SET source = ?, referred_by_patient_id = ? WHERE id = ?', [source, referrer, p.id]);
+    });
+
+    // Waitlist: patients hoping for a sooner slot, plus closed entries for the history view.
+    const idle = all<{ id: number }>(
+      `SELECT p.id FROM patients p WHERE NOT EXISTS (SELECT 1 FROM appointments a WHERE a.patient_id = p.id AND a.start_at >= ? AND a.status IN ('booked','confirmed'))
+        ORDER BY p.id LIMIT 12`,
+      [nowIsoStr],
+    ).map((r) => r.id);
+    const wl = (patient: number, svc: string, prac: string | null, from: number, to: number, tod: string, notes: string | null, createdDaysAgo: number) =>
+      run('INSERT INTO waitlist(patient_id, service_id, practitioner_id, earliest_date, latest_date, time_of_day, notes, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?)', [
+        patient,
+        svcId[svc],
+        prac ? pracId[prac] : null,
+        addDays(today, from),
+        addDays(today, to),
+        tod,
+        notes,
+        pick([userId.rec1, userId.rec2]),
+        iso(addDays(today, -createdDaysAgo), '13:10'),
+      ]).id;
+    wl(idle[0], 'legs', null, 0, 14, 'evening', 'Can come at short notice after work', 3);
+    wl(idle[1], 'hydra', null, 1, 20, 'morning', null, 2);
+    wl(idle[2], 'rf', 'nour', 0, 30, 'any', 'Wants an earlier date than the one offered', 5);
+    wl(idle[3], 'underarms', null, 0, 7, 'afternoon', null, 1);
+    wl(idle[4], 'peel', 'karim', 2, 21, 'any', 'Before a family wedding on the 20th', 4);
+    const removed = wl(idle[5], 'cleansing', null, -10, 5, 'any', null, 12);
+    run("UPDATE waitlist SET status = 'removed', closed_by = ?, closed_at = ?, close_reason = 'Patient no longer needs the appointment' WHERE id = ?", [userId.rec1, iso(addDays(today, -6), '15:00'), removed]);
+
+    // Past cash drawer counts. Yesterday is left open so the reminder shows; two days carry a variance.
+    for (let back = 35; back >= 2; back--) {
+      const date = addDays(today, -back);
+      const start = iso(date, '00:00');
+      const end = iso(addDays(date, 1), '00:00');
+      const sum = (sql: string, params: unknown[]) => scalar<number>(sql, params) ?? 0;
+      const cashIn = sum("SELECT COALESCE(SUM(amount), 0) FROM payments WHERE method = 'cash' AND received_at >= ? AND received_at < ?", [start, end]);
+      const anyPayment = sum('SELECT COUNT(*) FROM payments WHERE received_at >= ? AND received_at < ?', [start, end]);
+      if (!anyPayment) continue;
+      const cashRefunds = sum("SELECT COALESCE(SUM(amount), 0) FROM refunds WHERE method = 'cash' AND created_at >= ? AND created_at < ?", [start, end]);
+      const cashExpenses = sum("SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE method = 'cash' AND voided_at IS NULL AND date = ?", [date]);
+      const net = (method: string) =>
+        sum('SELECT COALESCE(SUM(amount), 0) FROM payments WHERE method = ? AND received_at >= ? AND received_at < ?', [method, start, end]) -
+        sum('SELECT COALESCE(SUM(amount), 0) FROM refunds WHERE method = ? AND created_at >= ? AND created_at < ?', [method, start, end]);
+      const float = EGP(2000);
+      const expected = float + cashIn - cashRefunds - cashExpenses;
+      const variance = back === 9 ? -EGP(200) : back === 15 ? EGP(50) : 0;
+      const note = back === 9 ? 'Short by 200 — change given twice on one visit; reported to the owner' : back === 15 ? 'Over by 50 — patient left change for the staff box, returned to her next visit' : null;
+      run(
+        `INSERT INTO day_closings(date, opening_float, cash_in, cash_refunds, cash_expenses, expected_cash, counted_cash, variance, card_total, transfer_total, notes, closed_by, closed_at, idempotency_key)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [date, float, cashIn, cashRefunds, cashExpenses, expected, expected + variance, variance, net('card'), net('bank_transfer'), note, pick([userId.rec1, userId.rec2]), iso(date, weekdayOf(date) === 6 ? '19:10' : '20:15'), key()],
+      );
+    }
+
     run("INSERT INTO audit_events(at, user_id, action, summary, sensitive) VALUES (?, NULL, 'demo.seed', 'Fictional demo data loaded', 0)", [nowIsoStr]);
   });
   invalidateSettings();

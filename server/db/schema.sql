@@ -16,8 +16,10 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE COLLATE NOCASE,
   password_hash TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('owner','receptionist','practitioner','accountant')),
+  role TEXT NOT NULL CHECK (role IN ('owner','receptionist','practitioner','accountant','assistant','call_center')),
   extra_permissions TEXT NOT NULL DEFAULT '[]',
+  -- Personal appearance and start-page choices (JSON; see preferencesSchema).
+  preferences TEXT NOT NULL DEFAULT '{}',
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   last_login_at TEXT
@@ -135,6 +137,9 @@ CREATE TABLE IF NOT EXISTS patients (
   allow_marketing INTEGER NOT NULL DEFAULT 0,
   primary_practitioner_id INTEGER REFERENCES practitioners(id),
   admin_notes TEXT,
+  -- How the patient found the clinic (marketing attribution) and who referred them.
+  source TEXT,
+  referred_by_patient_id INTEGER REFERENCES patients(id),
   created_at TEXT NOT NULL,
   created_by INTEGER REFERENCES users(id),
   updated_at TEXT NOT NULL
@@ -268,6 +273,7 @@ CREATE TABLE IF NOT EXISTS payments (
 );
 CREATE INDEX IF NOT EXISTS idx_payments_invoice ON payments(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_payments_received ON payments(received_at);
+CREATE INDEX IF NOT EXISTS idx_payments_patient ON payments(patient_id);
 
 CREATE TABLE IF NOT EXISTS refunds (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -614,6 +620,50 @@ CREATE TABLE IF NOT EXISTS communications (
   created_by INTEGER REFERENCES users(id),
   created_at TEXT NOT NULL
 );
+
+-- Patients waiting for a sooner or specific slot. Booking the patient for the same service
+-- fulfils the entry; removing it keeps the record with a reason.
+CREATE TABLE IF NOT EXISTS waitlist (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  patient_id INTEGER NOT NULL REFERENCES patients(id),
+  service_id INTEGER NOT NULL REFERENCES services(id),
+  practitioner_id INTEGER REFERENCES practitioners(id),
+  earliest_date TEXT NOT NULL,
+  latest_date TEXT NOT NULL,
+  time_of_day TEXT NOT NULL DEFAULT 'any' CHECK (time_of_day IN ('any','morning','afternoon','evening')),
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting','booked','removed')),
+  appointment_id INTEGER REFERENCES appointments(id),
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  closed_by INTEGER REFERENCES users(id),
+  closed_at TEXT,
+  close_reason TEXT,
+  CHECK (latest_date >= earliest_date)
+);
+CREATE INDEX IF NOT EXISTS idx_waitlist_status ON waitlist(status, earliest_date);
+
+-- End-of-day drawer count. Expected amounts are computed by the server from payments, refunds and
+-- cash expenses; a re-count supersedes the earlier closing and both are kept.
+CREATE TABLE IF NOT EXISTS day_closings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT NOT NULL,
+  opening_float INTEGER NOT NULL DEFAULT 0,
+  cash_in INTEGER NOT NULL,
+  cash_refunds INTEGER NOT NULL,
+  cash_expenses INTEGER NOT NULL,
+  expected_cash INTEGER NOT NULL,
+  counted_cash INTEGER NOT NULL,
+  variance INTEGER NOT NULL,
+  card_total INTEGER NOT NULL,
+  transfer_total INTEGER NOT NULL,
+  notes TEXT,
+  closed_by INTEGER REFERENCES users(id),
+  closed_at TEXT NOT NULL,
+  superseded_by INTEGER REFERENCES day_closings(id),
+  idempotency_key TEXT NOT NULL UNIQUE
+);
+CREATE INDEX IF NOT EXISTS idx_day_closings_date ON day_closings(date);
 
 -- Audit trail. Summaries name the action and record ids only — never clinical content.
 CREATE TABLE IF NOT EXISTS audit_events (

@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { ImageUp, RotateCcw, Trash2 } from 'lucide-react';
+import { Check, ImageUp, RotateCcw, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAction, useForm, useUrlState } from '@/lib/hooks';
 import { useSession } from '@/lib/session';
@@ -9,6 +9,7 @@ import { Badge, Button, Callout, Checkbox, Panel, SelectField, TextArea, TextFie
 import { ConfirmDialog } from '@/components/overlays';
 import { UnsavedChangesGuard } from '@/components/pickers';
 import { settingsSchema } from '@shared/schemas';
+import { ACCENT_PRESETS, BUILT_IN_ACCENT } from '@/lib/theme';
 import { ServicesConfig, PackageTemplatesConfig } from '@/pages/services/ServicesPage';
 import { PractitionersSettings, RoomsDevicesSettings, ConsentTemplatesSettings } from './ResourceSettings';
 import { StaffSettings, PermissionsSettings, AuditLog } from './AccessSettings';
@@ -94,6 +95,7 @@ function ClinicSettings({ section }: { section: 'clinic' | 'hours' | 'cancellati
       cancellation: { ...s.cancellation, policyTextEn: s.cancellation.policyTextEn ?? '', policyTextAr: s.cancellation.policyTextAr ?? '' },
       packageExpiryWarningDays: s.packageExpiryWarningDays,
       expiryWarningDays: s.expiryWarningDays,
+      brandColor: (s.brandColor ?? '') as string,
     },
     settingsSchema,
   );
@@ -157,6 +159,35 @@ function ClinicSettings({ section }: { section: 'clinic' | 'hours' | 'cancellati
                   </option>
                 ))}
               </SelectField>
+              <div className="span-2 stack tight">
+                <span className="field-label">{t('set.brandColor')}</span>
+                <div className="swatches" role="group" aria-label={t('set.brandColor')}>
+                  {ACCENT_PRESETS.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      className="swatch-btn"
+                      style={{ background: c.hex }}
+                      aria-pressed={(v.brandColor || BUILT_IN_ACCENT).toLowerCase() === c.hex}
+                      aria-label={t(`ap.color.${c.id}` as TKey)}
+                      title={t(`ap.color.${c.id}` as TKey)}
+                      onClick={() => form.set('brandColor', c.hex === BUILT_IN_ACCENT ? '' : c.hex)}
+                    >
+                      {(v.brandColor || BUILT_IN_ACCENT).toLowerCase() === c.hex && <Check size={14} aria-hidden />}
+                    </button>
+                  ))}
+                  <label className="swatch-btn" style={{ background: 'conic-gradient(#e74c3c, #f1c40f, #2ecc71, #3498db, #9b59b6, #e74c3c)', position: 'relative' }} title={t('ap.custom')}>
+                    <input
+                      type="color"
+                      aria-label={t('ap.custom')}
+                      value={v.brandColor || BUILT_IN_ACCENT}
+                      onChange={(e) => form.set('brandColor', e.target.value)}
+                      style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }}
+                    />
+                  </label>
+                </div>
+                <span className="field-hint">{t('set.brandColorHint')}</span>
+              </div>
             </div>
           </Panel>
           <LogoPanel />

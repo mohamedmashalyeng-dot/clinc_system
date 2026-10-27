@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { CheckCircle2, AlertTriangle, CalendarClock } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, CalendarClock, ListPlus } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { useAction, useDebounced, useErrorText } from '@/lib/hooks';
 import { useFmt } from '@/lib/format';
@@ -10,12 +10,15 @@ import { Button, Callout, SelectField, TextArea, TextField } from '@/components/
 import { Dialog } from '@/components/overlays';
 import { PatientPicker, type PatientRef } from '@/components/pickers';
 import { useTimeOff, useTimeOffText } from './TimeOff';
+import { useActions } from '@/layout/actions';
 import type { Appointment } from '@/lib/types';
 
 export interface BookingPrefill {
   patient?: PatientRef;
   serviceId?: number;
   practitionerId?: number;
+  roomId?: number;
+  deviceId?: number | null;
   date?: string;
   time?: string;
   purchasedPackageId?: number | null;
@@ -67,6 +70,7 @@ export function AppointmentFormDialog({ prefill, appointment, onClose }: { prefi
   const { me } = useSession();
   const errorText = useErrorText();
   const issueMessage = useIssueMessage();
+  const actions = useActions();
   const editing = !!appointment;
 
   const [patient, setPatient] = useState<PatientRef | null>(
@@ -74,8 +78,8 @@ export function AppointmentFormDialog({ prefill, appointment, onClose }: { prefi
   );
   const [serviceId, setServiceId] = useState<number | ''>(appointment?.serviceId ?? prefill?.serviceId ?? '');
   const [practitionerId, setPractitionerId] = useState<number | ''>(appointment?.practitionerId ?? prefill?.practitionerId ?? '');
-  const [roomId, setRoomId] = useState<number | ''>(appointment?.roomId ?? '');
-  const [deviceId, setDeviceId] = useState<number | ''>(appointment?.deviceId ?? '');
+  const [roomId, setRoomId] = useState<number | ''>(appointment?.roomId ?? prefill?.roomId ?? '');
+  const [deviceId, setDeviceId] = useState<number | ''>(appointment?.deviceId ?? prefill?.deviceId ?? '');
   const [date, setDate] = useState(appointment ? fmt.localDate(appointment.startAt) : prefill?.date ?? fmt.today());
   const [time, setTime] = useState(appointment ? fmt.localTime(appointment.startAt) : prefill?.time ?? '');
   const [packageId, setPackageId] = useState<number | '' | null>(appointment ? appointment.purchasedPackageId ?? '' : prefill?.purchasedPackageId ?? null);
@@ -148,7 +152,7 @@ export function AppointmentFormDialog({ prefill, appointment, onClose }: { prefi
   const save = useAction(
     (body: Record<string, unknown>) => (editing ? api.put(`/appointments/${appointment!.id}`, body) : api.post<{ id: number }>('/appointments', body)),
     {
-      success: editing ? t('appt.updated') : t('appt.created'),
+      success: (r) => (editing ? t('appt.updated') : (r as { waitlistFulfilled?: number } | undefined)?.waitlistFulfilled ? t('wl.fulfilled') : t('appt.created')),
       onSuccess: () => onClose(),
       onError: (e) => {
         if (e instanceof ApiError && e.code === 'SCHEDULING_CONFLICT' && e.details) {
@@ -214,6 +218,19 @@ export function AppointmentFormDialog({ prefill, appointment, onClose }: { prefi
       onSubmit={submit}
       footer={
         <>
+          {!editing && (
+            <Button
+              variant="ghost"
+              icon={<ListPlus size={15} />}
+              style={{ marginInlineEnd: 'auto' }}
+              onClick={() => {
+                actions.addToWaitlist({ patient: patient ?? undefined, serviceId: serviceId || undefined, practitionerId: practitionerId || null, earliestDate: date });
+                onClose();
+              }}
+            >
+              {t('wl.addInstead')}
+            </Button>
+          )}
           <Button onClick={onClose}>{t('common.cancel')}</Button>
           <Button variant="primary" loading={save.isPending} onClick={submit} disabled={check ? !check.ok && !!checkInput : false}>
             {editing ? t('common.saveChanges') : t('appt.new')}

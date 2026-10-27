@@ -1,9 +1,11 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api';
 import type { Me, Reference } from './types';
 import type { Permission } from '@shared/permissions';
 import { hasStoredLanguage, useI18n } from '@/i18n';
+import { applyAppearance, watchSystemTheme } from './theme';
+import type { Preferences } from '@shared/schemas';
 
 interface Session {
   me: Me;
@@ -11,6 +13,9 @@ interface Session {
   canAll: (...p: Permission[]) => boolean;
   canAny: (...p: Permission[]) => boolean;
   logout: () => Promise<void>;
+  preferences: Preferences;
+  /** Saves to the user's account (follows them to other devices) and applies at once. */
+  savePreferences: (patch: Partial<Preferences>) => Promise<void>;
 }
 
 const Ctx = createContext<Session | null>(null);
@@ -23,6 +28,22 @@ export function SessionProvider({ me, children }: { me: Me; children: ReactNode 
   const qc = useQueryClient();
   const { setLang } = useI18n();
   const perms = useMemo(() => new Set(me.permissions), [me.permissions]);
+  const [preferences, setPreferences] = useState<Preferences>(me.preferences);
+  useEffect(() => setPreferences(me.preferences), [me.preferences]);
+  const brand = me.settings.brandColor ?? null;
+  useEffect(() => {
+    const apply = () => applyAppearance(preferences, brand);
+    apply();
+    return preferences.theme === 'system' ? watchSystemTheme(apply) : undefined;
+  }, [preferences, brand]);
+  const savePreferences = useCallback(
+    async (patch: Partial<Preferences>) => {
+      setPreferences((p) => ({ ...p, ...patch }));
+      const r = await api.put<{ preferences: Preferences }>('/auth/preferences', patch);
+      qc.setQueryData<Me | null>(['me'], (m) => (m ? { ...m, preferences: r.preferences } : m));
+    },
+    [qc],
+  );
 
   useEffect(() => {
     if (!hasStoredLanguage()) setLang(me.settings.defaultLanguage);
@@ -45,8 +66,10 @@ export function SessionProvider({ me, children }: { me: Me; children: ReactNode 
       canAll: (...p) => p.every((x) => perms.has(x)),
       canAny: (...p) => p.some((x) => perms.has(x)),
       logout,
+      preferences,
+      savePreferences,
     }),
-    [me, perms, logout],
+    [me, perms, logout, preferences, savePreferences],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { Download, Info } from 'lucide-react';
 import { api } from '@/lib/api';
@@ -30,6 +31,15 @@ interface ReportData {
     sessionsByPractitioner: { practitionerId: number; sessions: number; patients: number }[];
     packageUsage: { templateId: number; nameEn: string; nameAr: string; redeemed: number; reversed: number; adjusted: number }[];
     consumption: { itemId: number; name: string; unit: string; sku: string; used: number; wasted: number; received: number; cost: number | null }[];
+  };
+  marketing?: {
+    bySource: { source: string; newPatients: number; converted: number; revenue: number | null }[];
+    newPatients: number;
+    converted: number;
+    revenue: number | null;
+    marketingSpend: number | null;
+    costPerNewPatient: number | null;
+    topReferrers: { patientId: number; name: string; code: string; referred: number; converted: number; revenue: number | null }[] | null;
   };
 }
 
@@ -135,6 +145,7 @@ export function ReportsPage() {
   const q = useQuery({ queryKey: ['reports', r.from, r.to], queryFn: () => api.get<ReportData>('/reports', { from: r.from, to: r.to }), placeholderData: (p) => p });
   const f = q.data?.financial;
   const o = q.data?.operational;
+  const m = q.data?.marketing;
   const suffix = `${r.from}_${r.to}`;
   return (
     <div className="page">
@@ -324,6 +335,50 @@ export function ReportsPage() {
               { label: t('rep.usedQty'), value: (x) => `${fmt.num(x.used)} ${x.unit}`, num: true },
             ]}
           />
+        </section>
+      )}
+
+      {m && (
+        <section className="stack" aria-labelledby="mkt-h">
+          <h2 id="mkt-h">{t('mkt.title')}</h2>
+          <div className="metrics">
+            <Kpi label={t('mkt.newPatients')} value={fmt.num(m.newPatients)} />
+            <Kpi label={t('mkt.converted')} value={fmt.num(m.converted)} hint={m.newPatients ? t('mkt.conversionRate', { rate: fmt.pct(m.converted / m.newPatients) }) : undefined} />
+            {m.revenue !== null && <Kpi label={t('mkt.revenue')} value={fmt.money(m.revenue)} />}
+            {m.marketingSpend !== null && <Kpi label={t('mkt.spend')} value={fmt.money(m.marketingSpend)} />}
+            {m.costPerNewPatient !== null && <Kpi label={t('mkt.cac')} value={fmt.money(m.costPerNewPatient)} />}
+            {m.revenue !== null && m.marketingSpend ? <Kpi label={t('mkt.roi')} value={`${fmt.num(Math.round((m.revenue / m.marketingSpend) * 10) / 10)}×`} hint={t('mkt.roiHint')} /> : null}
+          </div>
+          <div className="grid-2">
+            <ReportTable
+              title={t('mkt.bySource')}
+              definition={t('mkt.def')}
+              csv={`patients-by-source_${suffix}`}
+              rows={m.bySource}
+              bar={(x) => x.newPatients}
+              cols={[
+                { label: t('pat.source'), value: (x) => tx(`src.${x.source}`) },
+                { label: t('mkt.newPatients'), value: (x) => x.newPatients, num: true },
+                { label: t('mkt.converted'), value: (x) => x.converted, num: true },
+                ...(m.revenue !== null ? [{ label: t('mkt.revenue'), value: (x: (typeof m.bySource)[number]) => fmt.money(x.revenue ?? 0), num: true }] : []),
+              ]}
+            />
+            {m.topReferrers && (
+              <ReportTable
+                title={t('mkt.referrers')}
+                definition={t('mkt.referrersDef')}
+                csv={`top-referrers_${suffix}`}
+                rows={m.topReferrers}
+                bar={(x) => x.referred}
+                cols={[
+                  { label: t('appt.patient'), value: (x) => `${x.name} (${x.code})`, render: (x) => <Link to={`/patients/${x.patientId}`}>{x.name}</Link> },
+                  { label: t('mkt.referred'), value: (x) => x.referred, num: true },
+                  { label: t('mkt.converted'), value: (x) => x.converted, num: true },
+                  ...(m.revenue !== null ? [{ label: t('mkt.revenue'), value: (x: NonNullable<typeof m.topReferrers>[number]) => fmt.money(x.revenue ?? 0), num: true }] : []),
+                ]}
+              />
+            )}
+          </div>
         </section>
       )}
     </div>

@@ -15,6 +15,10 @@ import { inventoryRouter } from './routes/inventory.js';
 import { followupRouter } from './routes/followup.js';
 import { reportsRouter } from './routes/reports.js';
 import { timeOffRouter } from './routes/timeoff.js';
+import { waitlistRouter } from './routes/waitlist.js';
+import { growthRouter } from './routes/growth.js';
+import { dayCloseRouter } from './routes/dayclose.js';
+import { myDayRouter } from './routes/myday.js';
 
 export function createApp() {
   const app = express();
@@ -51,6 +55,10 @@ export function createApp() {
   app.use('/api/patients', patientsRouter);
   app.use('/api/appointments', appointmentsRouter);
   app.use('/api/time-off', timeOffRouter);
+  app.use('/api/waitlist', waitlistRouter);
+  app.use('/api/growth', growthRouter);
+  app.use('/api/day-close', dayCloseRouter);
+  app.use('/api/my-day', myDayRouter);
   app.use('/api', clinicalRouter);
   app.use('/api/packages', packagesRouter);
   app.use('/api', billingRouter);

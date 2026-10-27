@@ -1,4 +1,5 @@
-import { AlertTriangle, CalendarClock, Package, Wallet } from 'lucide-react';
+import { Link } from 'react-router';
+import { AlertTriangle, CalendarClock, Package, TrendingUp, Wallet } from 'lucide-react';
 import { useFmt } from '@/lib/format';
 import { useRef_, useSession } from '@/lib/session';
 import { useI18n } from '@/i18n';
@@ -7,6 +8,7 @@ import { useActions } from '@/layout/actions';
 import type { PatientOverview } from '../PatientProfilePage';
 import type { AppointmentStatus } from '@shared/domain';
 import type { TKey } from '@/i18n/en';
+import { SegmentBadge, useRiskText } from '@/components/insights';
 
 export function OverviewTab({ data, onTab }: { data: PatientOverview; onTab: (tab: string) => void }) {
   const { t, tx, pick } = useI18n();
@@ -125,6 +127,10 @@ export function OverviewTab({ data, onTab }: { data: PatientOverview; onTab: (ta
               [t('pat.channel'), `${tx(`pat.channel.${p.contactChannel}`)} · ${p.preferredLanguage === 'ar' ? 'العربية' : 'English'}`],
               [t('pat.allowReminders'), p.allowReminders ? t('common.yes') : t('common.no')],
               [t('pat.allowMarketing'), p.allowMarketing ? t('common.yes') : t('common.no')],
+              [t('pat.source'), p.source ? tx(`src.${p.source}`) : t('src.unknown')],
+              ...(p.referredByPatientId
+                ? ([[t('pat.referredBy'), <Link to={`/patients/${p.referredByPatientId}`}>{p.referredByName ?? '—'}</Link>]] as [string, React.ReactNode][])
+                : []),
               [t('pat.primaryPractitioner'), ref.practitionerName(p.primaryPractitionerId)],
               ...(p.adminNotes ? ([[t('common.notes'), p.adminNotes]] as [string, string][]) : []),
             ]}
@@ -134,6 +140,7 @@ export function OverviewTab({ data, onTab }: { data: PatientOverview; onTab: (ta
           </p>
         </Panel>
         <div className="stack">
+          <InsightsPanel data={data} />
           {data.consents && (
             <Panel title={t('ov.consents')} actions={<button className="link-btn small" onClick={() => onTab('consents')}>{t('common.view')}</button>}>
               <div className="stack tight">
@@ -178,5 +185,52 @@ export function OverviewTab({ data, onTab }: { data: PatientOverview; onTab: (ta
         </div>
       </div>
     </div>
+  );
+}
+
+/** Value, loyalty and attendance at a glance — every figure is derived from visits and payments. */
+function InsightsPanel({ data }: { data: PatientOverview }) {
+  const { t } = useI18n();
+  const fmt = useFmt();
+  const riskText = useRiskText();
+  const i = data.insights;
+  return (
+    <Panel
+      title={
+        <h2 className="row" style={{ gap: 8 }}>
+          <TrendingUp size={17} aria-hidden /> {t('ins.title')}
+        </h2>
+      }
+      actions={<SegmentBadge segment={i.segment} lapsed={i.lapsed} always />}
+    >
+      <KV
+        items={[
+          ...(i.lifetimeValue !== null
+            ? ([
+                [t('ins.ltv'), <strong>{fmt.money(i.lifetimeValue)}</strong>],
+                [t('ins.avgPerVisit'), fmt.money(i.avgPerVisit ?? 0)],
+              ] as [string, React.ReactNode][])
+            : []),
+          [t('ins.visits'), t('ins.visitsValue', { n: i.completedVisits, first: i.firstVisit ? fmt.date(i.firstVisit) : '—' })],
+          [t('pat.lastVisit'), i.lastVisit ? `${fmt.date(i.lastVisit)} · ${t('gr.daysAgo', { n: i.daysSinceLastVisit ?? 0 })}` : '—'],
+          [t('ins.interval'), i.avgIntervalDays !== null ? t('gr.days', { n: i.avgIntervalDays }) : '—'],
+          [t('ins.attendance'), i.attendanceRate !== null ? fmt.pct(i.attendanceRate) : '—'],
+          [
+            t('ins.risk'),
+            i.noShowRisk.level === 'low' ? (
+              <span className="muted">{t('risk.low')}</span>
+            ) : (
+              <span style={{ color: i.noShowRisk.level === 'high' ? 'var(--danger)' : 'var(--warning)' }}>
+                {i.noShowRisk.level === 'high' ? t('risk.high') : t('risk.medium')} — {riskText(i.noShowRisk)}
+              </span>
+            ),
+          ],
+          [t('ins.referrals'), String(i.referrals)],
+        ]}
+      />
+      <p className="xs muted" style={{ marginTop: 10 }}>
+        {t(`seg.def.${i.segment}` as TKey)}
+      </p>
+    </Panel>
   );
 }

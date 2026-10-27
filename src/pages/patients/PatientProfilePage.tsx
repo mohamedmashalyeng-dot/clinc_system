@@ -8,7 +8,8 @@ import { useSession } from '@/lib/session';
 import { useI18n } from '@/i18n';
 import { Badge, Button, ErrorState, Loading, Tabs, Restricted } from '@/components/ui';
 import { useActions } from '@/layout/actions';
-import type { Alert, Patient } from '@/lib/types';
+import type { Alert, Patient, PatientInsights } from '@/lib/types';
+import { RiskBadge, SegmentBadge } from '@/components/insights';
 import { OverviewTab } from './tabs/OverviewTab';
 import { MedicalTab } from './tabs/MedicalTab';
 import { AppointmentsTab } from './tabs/AppointmentsTab';
@@ -21,6 +22,7 @@ import type { TKey } from '@/i18n/en';
 
 export interface PatientOverview {
   patient: Patient;
+  insights: PatientInsights;
   nextAppointment: { id: number; startAt: string; status: string; nameEn: string; nameAr: string; displayName: string; displayNameAr: string } | null;
   packages: { id: number; nameEn: string; nameAr: string; state: string; remainingSessions: number; totalSessions: number; expiryDate: string; balance: number }[] | null;
   outstanding: number | null;
@@ -82,6 +84,8 @@ export function PatientProfilePage() {
             <span>{t('pat.since', { date: fmt.date(patient.createdAt) })}</span>
           </div>
           <div className="tag-row">
+            <SegmentBadge segment={q.data.insights.segment} lapsed={q.data.insights.lapsed} />
+            <RiskBadge risk={q.data.insights.noShowRisk} />
             {highAlerts > 0 && (
               <Badge tone="danger">
                 <AlertTriangle size={12} /> {highAlerts} {t('ov.alerts')}

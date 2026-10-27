@@ -35,8 +35,38 @@ export type ConsentType = (typeof CONSENT_TYPES)[number];
 export const MESSAGE_CHANNELS = ['whatsapp', 'sms', 'email'] as const;
 export type MessageChannel = (typeof MESSAGE_CHANNELS)[number];
 
-export const TEMPLATE_KINDS = ['reminder', 'aftercare', 'followup', 'package_expiry'] as const;
+export const TEMPLATE_KINDS = ['reminder', 'aftercare', 'followup', 'package_expiry', 'rebook', 'unused_sessions', 'win_back', 'renewal', 'birthday'] as const;
 export type TemplateKind = (typeof TEMPLATE_KINDS)[number];
+
+/** How a patient found the clinic, for marketing attribution. */
+export const PATIENT_SOURCES = ['instagram', 'facebook', 'tiktok', 'google', 'website', 'referral', 'doctor_referral', 'walk_in', 'other'] as const;
+export type PatientSource = (typeof PATIENT_SOURCES)[number];
+
+/** Waitlist time-of-day preference; ranges are clinic-local start times. */
+export const WAITLIST_TIMES = ['any', 'morning', 'afternoon', 'evening'] as const;
+export type WaitlistTime = (typeof WAITLIST_TIMES)[number];
+
+export function timeOfDayAccepts(pref: string, time: string): boolean {
+  if (pref === 'morning') return time < '12:00';
+  if (pref === 'afternoon') return time >= '12:00' && time < '16:00';
+  if (pref === 'evening') return time >= '16:00';
+  return true;
+}
+
+/** Patient value and attendance segments (definitions live with the insight service). */
+export const PATIENT_SEGMENTS = ['vip', 'loyal', 'regular', 'new', 'prospect'] as const;
+export type PatientSegment = (typeof PATIENT_SEGMENTS)[number];
+
+/**
+ * WhatsApp click-to-chat link with the message pre-filled. Staff still press send in WhatsApp,
+ * so nothing is sent by the system. Local Egyptian numbers get the +20 country code.
+ */
+export function whatsappLink(phone: string, text: string): string | null {
+  let digits = normalizePhone(phone);
+  if (digits.length === 11 && digits.startsWith('01')) digits = '20' + digits.slice(1);
+  if (digits.length < 8) return null;
+  return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
+}
 
 export const EXPENSE_CATEGORIES = ['supplies', 'rent', 'utilities', 'salaries', 'maintenance', 'marketing', 'other'] as const;
 

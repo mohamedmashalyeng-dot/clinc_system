@@ -12,6 +12,8 @@ import { checkEligibility, eligiblePackages } from '../services/packages.js';
 import { addAdjustment, appointmentPaymentState, ensureAppointmentInvoice, invoiceBalance, issueRefund, refundable, voidInvoice } from '../services/finance.js';
 import { startSession } from '../services/sessions.js';
 import { getService } from '../services/reference.js';
+import { attachNoShowRisk } from '../services/insights.js';
+import { fulfilWaitlist } from './waitlist.js';
 
 export const appointmentsRouter = Router();
 type Row = Record<string, unknown>;
@@ -122,10 +124,10 @@ appointmentsRouter.get('/', requirePerm('appointments.view'), (req, res) => {
     const { page, pageSize, offset } = pageParams(req.query, 25);
     const total = scalar<number>(`SELECT COUNT(*) FROM appointments a JOIN patients p ON p.id = a.patient_id JOIN services s ON s.id = a.service_id WHERE ${whereSql}`, params);
     const rows = all<Row>(`${SELECT} WHERE ${whereSql} ORDER BY a.start_at ${sort} LIMIT ? OFFSET ?`, [...params, pageSize, offset]);
-    return void res.json({ items: rows.map((r) => mapAppointment(req, r)), total, page, pageSize });
+    return void res.json({ items: attachNoShowRisk(rows.map((r) => mapAppointment(req, r))), total, page, pageSize });
   }
   const rows = all<Row>(`${SELECT} WHERE ${whereSql} ORDER BY a.start_at ${sort} LIMIT 2000`, params);
-  res.json({ items: rows.map((r) => mapAppointment(req, r)), total: rows.length, page: 1, pageSize: rows.length });
+  res.json({ items: attachNoShowRisk(rows.map((r) => mapAppointment(req, r))), total: rows.length, page: 1, pageSize: rows.length });
 });
 
 appointmentsRouter.get('/queue', requirePerm('appointments.view'), (req, res) => {
@@ -137,7 +139,7 @@ appointmentsRouter.get('/queue', requirePerm('appointments.view'), (req, res) =>
       ORDER BY CASE a.status WHEN 'in_treatment' THEN 0 WHEN 'arrived' THEN 1 ELSE 2 END, COALESCE(a.arrived_at, a.start_at)`,
     [b.start, b.end],
   );
-  const items = rows.map((r) => mapAppointment(req, r));
+  const items = attachNoShowRisk(rows.map((r) => mapAppointment(req, r)));
   res.json({
     waiting: items.filter((a) => a.status === 'arrived').sort((x, y) => String(x.arrivedAt).localeCompare(String(y.arrivedAt))),
     inTreatment: items.filter((a) => a.status === 'in_treatment'),
@@ -200,7 +202,7 @@ function validatePackage(packageId: number | null, patientId: number, serviceId:
 appointmentsRouter.post('/', requirePerm('appointments.manage'), (req, res) => {
   const d = validate(appointmentSchema, req.body);
   const user = assertPatientAccess(req, d.patientId);
-  const id = tx(() => {
+  const created = tx(() => {
     const slot = toSlotRequest(d, { patientId: d.patientId });
     const { issues, times } = evaluateSlot(slot);
     if (issues.length || !times) throw schedulingConflict(slot, issues);
@@ -233,9 +235,9 @@ appointmentsRouter.post('/', requirePerm('appointments.manage'), (req, res) => {
     );
     run("INSERT INTO appointment_events(appointment_id, kind, to_status, created_by, created_at) VALUES (?, 'created', ?, ?, ?)", [r.id, d.status, user.id, now]);
     audit(user, 'appointment.create', { entityType: 'appointment', entityId: r.id, patientId: d.patientId, summary: `Appointment booked for ${d.date} ${d.time}` });
-    return r.id;
+    return { id: r.id, waitlistFulfilled: fulfilWaitlist(user, d.patientId, d.serviceId, r.id) };
   });
-  res.status(201).json({ id });
+  res.status(201).json(created);
 });
 
 appointmentsRouter.put('/:id', requirePerm('appointments.manage'), (req, res) => {
@@ -282,7 +284,7 @@ appointmentsRouter.get('/:id', requirePerm('appointments.view'), (req, res) => {
   const id = intParam(req.params.id);
   const r = get<Row>(`${SELECT} WHERE a.id = ?`, [id]);
   if (!r) throw notFound('Appointment');
-  const appt = mapAppointment(req, r);
+  const [appt] = attachNoShowRisk([mapAppointment(req, r)]);
   const events = appt.masked
     ? []
     : all<Row>(

@@ -8,6 +8,7 @@ import { useRef_, useSession } from '@/lib/session';
 import { useI18n } from '@/i18n';
 import { Button, EmptyState, ErrorState, Loading, PayBadge, StatusBadge } from '@/components/ui';
 import { useActions } from '@/layout/actions';
+import { RiskBadge } from '@/components/insights';
 import type { Appointment } from '@/lib/types';
 import type { AppointmentStatus } from '@shared/domain';
 import type { TKey } from '@/i18n/en';
@@ -66,6 +67,7 @@ export function ScheduleRow({ a, showDate }: { a: Appointment; showDate?: boolea
       </div>
       <div className="row wrap" style={{ justifyContent: 'flex-end' }} onClick={(e) => e.stopPropagation()}>
         <StatusBadge status={a.status} />
+        <RiskBadge risk={a.noShowRisk} compact />
         {a.payment && <PayBadge state={a.payment.state} />}
         {isToday && (a.status === 'booked' || a.status === 'confirmed') && can('appointments.checkin') && !a.masked && (
           <Button size="xs" variant="soft" icon={<LogIn size={13} className="flip-rtl" />} loading={status.isPending && status.variables?.id === a.id} onClick={() => status.mutate({ id: a.id, status: 'arrived' })}>
@@ -111,7 +113,9 @@ export function ReceptionQueue({ compact }: { compact?: boolean }) {
         <div key={a.id} className="queue-item">
           {kind === 'waiting' ? <span className="queue-pos">{i + 1}</span> : <span className="color-dot" style={{ background: ref.practitionerColor(a.practitionerId) }} aria-hidden />}
           <button className="link-btn grow" style={{ color: 'inherit', minWidth: 0 }} onClick={() => actions.openAppointment(a.id)}>
-            <div className="strong truncate">{a.masked ? t('appt.busy') : a.patientName}</div>
+            <div className="strong truncate">
+              {a.masked ? t('appt.busy') : a.patientName} {kind === 'expected' && <RiskBadge risk={a.noShowRisk} compact />}
+            </div>
             <div className="xs muted truncate">
               {fmt.time(a.startAt)} · {ref.serviceName(a.serviceId)} · {ref.practitionerName(a.practitionerId)}
             </div>

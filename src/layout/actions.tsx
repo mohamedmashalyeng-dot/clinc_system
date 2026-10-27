@@ -10,6 +10,7 @@ import { InvoiceDrawer } from '@/pages/billing/InvoiceDrawer';
 import { PaymentDialog, type PaymentTarget } from '@/pages/billing/PaymentDialog';
 import { CollectPaymentDialog } from '@/pages/billing/CollectPaymentDialog';
 import { SellPackageDialog } from '@/pages/services/SellPackageDialog';
+import { WaitlistDialog, type WaitlistPrefill } from '@/pages/appointments/Waitlist';
 
 interface Actions {
   newPatient: (onCreated?: (id: number) => void) => void;
@@ -21,6 +22,7 @@ interface Actions {
   recordPayment: (target: PaymentTarget) => void;
   collectPayment: (patient?: PatientRef) => void;
   sellPackage: (patient: PatientRef) => void;
+  addToWaitlist: (prefill?: WaitlistPrefill) => void;
 }
 
 const Ctx = createContext<Actions | null>(null);
@@ -33,6 +35,7 @@ export function ActionsProvider({ children }: { children: ReactNode }) {
   const [payment, setPayment] = useState<PaymentTarget | null>(null);
   const [collect, setCollect] = useState<{ patient?: PatientRef } | null>(null);
   const [sell, setSell] = useState<PatientRef | null>(null);
+  const [waitlist, setWaitlist] = useState<{ prefill?: WaitlistPrefill } | null>(null);
 
   const actions = useMemo<Actions>(
     () => ({
@@ -45,6 +48,7 @@ export function ActionsProvider({ children }: { children: ReactNode }) {
       recordPayment: (target) => setPayment(target),
       collectPayment: (patient) => setCollect({ patient }),
       sellPackage: (patient) => setSell(patient),
+      addToWaitlist: (prefill) => setWaitlist({ prefill }),
     }),
     [],
   );
@@ -59,6 +63,7 @@ export function ActionsProvider({ children }: { children: ReactNode }) {
       {payment && <PaymentDialog target={payment} onClose={() => setPayment(null)} />}
       {collect && <CollectPaymentDialog patient={collect.patient} onClose={() => setCollect(null)} />}
       {sell && <SellPackageDialog patient={sell} onClose={() => setSell(null)} />}
+      {waitlist && <WaitlistDialog prefill={waitlist.prefill} onClose={() => setWaitlist(null)} />}
     </Ctx.Provider>
   );
 }

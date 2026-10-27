@@ -1,6 +1,8 @@
 // Shapes returned by the API (kept in one place so pages reference shared records consistently).
 import type { WeeklyHours } from '@shared/domain';
-import type { AppointmentStatus } from '@shared/domain';
+import type { Role } from '@shared/permissions';
+import type { Preferences } from '@shared/schemas';
+import type { AppointmentStatus, PatientSegment } from '@shared/domain';
 
 export interface Settings {
   clinicName: string;
@@ -26,10 +28,12 @@ export interface Settings {
   expiryWarningDays: number;
   integrations: Record<string, 'connected' | 'not_connected'>;
   hasLogo: boolean;
+  brandColor?: string | null;
 }
 
 export interface Me {
-  user: { id: number; name: string; email: string; role: 'owner' | 'receptionist' | 'practitioner' | 'accountant'; practitionerId: number | null };
+  user: { id: number; name: string; email: string; role: Role; practitionerId: number | null };
+  preferences: Preferences;
   permissions: string[];
   demoMode: boolean;
   settings: Settings;
@@ -174,6 +178,13 @@ export interface Appointment {
   sessionStatus: string | null;
   payment: PaymentState | null;
   depositAmount: number;
+  /** Only on upcoming bookings with a medium or high risk. */
+  noShowRisk?: NoShowRisk | null;
+}
+
+export interface NoShowRisk {
+  level: 'low' | 'medium' | 'high';
+  reasons: { code: 'no_shows' | 'late_cancellations' | 'first_visit'; n?: number }[];
 }
 
 export interface Paged<T> {
@@ -197,6 +208,8 @@ export interface PatientListItem {
   nextVisit: string | null;
   outstanding: number | null;
   activePackages: number;
+  segment: PatientSegment | null;
+  lapsed: boolean;
 }
 
 export interface Patient {
@@ -221,7 +234,29 @@ export interface Patient {
   allowMarketing: boolean;
   primaryPractitionerId: number | null;
   adminNotes: string | null;
+  source: string | null;
+  referredByPatientId: number | null;
+  /** Present on the profile response. */
+  referredByName?: string | null;
   createdAt: string;
+}
+
+export interface PatientInsights {
+  segment: PatientSegment;
+  lapsed: boolean;
+  daysSinceLastVisit: number | null;
+  completedVisits: number;
+  noShows: number;
+  cancellations: number;
+  lateCancellations: number;
+  firstVisit: string | null;
+  lastVisit: string | null;
+  avgIntervalDays: number | null;
+  attendanceRate: number | null;
+  lifetimeValue: number | null;
+  avgPerVisit: number | null;
+  noShowRisk: NoShowRisk;
+  referrals: number;
 }
 
 export interface Alert {

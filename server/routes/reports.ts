@@ -3,11 +3,12 @@ import { all, camel, get, scalar } from '../db/db.js';
 import { assertPerm, can, patientScopeSql, requirePerm } from '../auth.js';
 import { badRequest, optInt, optStr } from '../http.js';
 import { clinicToday, getSettings } from '../settings.js';
-import { addDays, diffDays, isValidDateString, rangeBoundsUtc } from '../../shared/time.js';
+import { addDays, diffDays, isValidDateString, rangeBoundsUtc, zonedParts } from '../../shared/time.js';
 import { INVOICE_BALANCE_SQL } from '../services/finance.js';
 import { packageSummary } from '../services/packages.js';
 import { inventoryAlerts } from '../services/inventory.js';
 import { mapAppointment } from './appointments.js';
+import { attachNoShowRisk } from '../services/insights.js';
 
 export const reportsRouter = Router();
 type Row = Record<string, unknown>;
@@ -91,7 +92,18 @@ reportsRouter.get('/dashboard', requirePerm('dashboard.view'), (req, res) => {
         [sb.start, sb.end, ...apptParams],
       ).map((row) => mapAppointment(req, row))
     : [];
-  res.json({ range: { from: r.from, to: r.to }, scheduleDate, metrics, schedule });
+  if (can(req, 'packages.view') && can(req, 'followup.view')) {
+    // Prepaid sessions waiting with nothing booked: the first list in the growth centre.
+    metrics.unbookedPackages = scalar<number>(
+      `SELECT COUNT(*) FROM purchased_packages pp JOIN patients p ON p.id = pp.patient_id
+        WHERE ${scope.sql} AND pp.status = 'active' AND pp.expiry_date >= ?
+          AND (SELECT SUM(quantity) FROM purchased_package_items WHERE purchased_package_id = pp.id)
+              + COALESCE((SELECT SUM(delta) FROM package_usage WHERE purchased_package_id = pp.id), 0) > 0
+          AND NOT EXISTS (SELECT 1 FROM appointments x WHERE x.patient_id = p.id AND x.status IN ('booked','confirmed','arrived','in_treatment') AND x.start_at >= ?)`,
+      [...scope.params, r.today, rangeBoundsUtc(r.today, r.today, settings.timezone).start],
+    );
+  }
+  res.json({ range: { from: r.from, to: r.to }, scheduleDate, metrics, schedule: attachNoShowRisk(schedule) });
 });
 
 reportsRouter.get('/reports', (req, res) => {
@@ -195,6 +207,37 @@ reportsRouter.get('/reports', (req, res) => {
       consumption,
     };
   }
+
+  // Marketing attribution: patients registered in the range, grouped by how they found the clinic.
+  // Revenue is everything collected from those patients to date (payments − refunds).
+  const netPaid = 'COALESCE((SELECT SUM(amount) FROM payments WHERE patient_id = p.id), 0) - COALESCE((SELECT SUM(amount) FROM refunds WHERE patient_id = p.id), 0)';
+  const converted = "CASE WHEN EXISTS (SELECT 1 FROM appointments a WHERE a.patient_id = p.id AND a.status = 'completed') THEN 1 ELSE 0 END";
+  const bySource = all<Row>(
+    `SELECT COALESCE(p.source, 'unknown') AS source, COUNT(*) AS new_patients, SUM(${converted}) AS converted, COALESCE(SUM(${netPaid}), 0) AS revenue
+       FROM patients p WHERE p.created_at >= ? AND p.created_at < ? GROUP BY COALESCE(p.source, 'unknown') ORDER BY new_patients DESC`,
+    [r.start, r.end],
+  ).map((x) => ({ source: x.source as string, newPatients: Number(x.new_patients), converted: Number(x.converted), revenue: fin ? Number(x.revenue) : null }));
+  const newPatients = bySource.reduce((s, x) => s + x.newPatients, 0);
+  const marketingSpend = fin
+    ? scalar<number>("SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE voided_at IS NULL AND category = 'marketing' AND date >= ? AND date <= ?", [r.from, r.to])
+    : null;
+  out.marketing = {
+    bySource,
+    newPatients,
+    converted: bySource.reduce((s, x) => s + x.converted, 0),
+    revenue: fin ? bySource.reduce((s, x) => s + (x.revenue ?? 0), 0) : null,
+    marketingSpend,
+    costPerNewPatient: marketingSpend !== null && newPatients ? Math.round(marketingSpend / newPatients) : null,
+    // Referrer names are patient identities: only for users who may see every patient.
+    topReferrers: can(req, 'patients.view_all')
+      ? all<Row>(
+          `SELECT ref.id, ref.first_name, ref.last_name, ref.code, COUNT(*) AS referred, SUM(${converted}) AS converted, COALESCE(SUM(${netPaid}), 0) AS revenue
+             FROM patients p JOIN patients ref ON ref.id = p.referred_by_patient_id
+            WHERE p.created_at >= ? AND p.created_at < ? GROUP BY ref.id ORDER BY referred DESC, revenue DESC LIMIT 10`,
+          [r.start, r.end],
+        ).map((x) => ({ patientId: x.id as number, name: `${x.first_name} ${x.last_name}`, code: x.code as string, referred: Number(x.referred), converted: Number(x.converted), revenue: fin ? Number(x.revenue) : null }))
+      : null,
+  };
   res.json(out);
 });
 
@@ -242,6 +285,15 @@ reportsRouter.get('/notifications', (req, res) => {
       [today],
     );
     if (overdue) items.push({ key: 'installments', kind: 'installments_overdue', severity: 'high', params: { count: overdue }, link: '/billing?status=outstanding' });
+  }
+  if (can(req, 'payments.record')) {
+    // Recent days that took payments but whose cash drawer was never counted.
+    const from = addDays(today, -7);
+    const b = rangeBoundsUtc(from, addDays(today, -1), settings.timezone);
+    const paidDays = new Set(all<{ received_at: string }>('SELECT received_at FROM payments WHERE received_at >= ? AND received_at < ?', [b.start, b.end]).map((p) => zonedParts(p.received_at, settings.timezone).date));
+    const closed = new Set(all<{ date: string }>('SELECT date FROM day_closings WHERE superseded_by IS NULL AND date >= ?', [from]).map((c) => c.date));
+    const open = [...paidDays].filter((d) => !closed.has(d)).length;
+    if (open) items.push({ key: 'dayclose', kind: 'days_unclosed', severity: 'medium', params: { count: open }, link: '/billing?tab=close' });
   }
   if (can(req, 'aftercare.approve')) {
     const n = scalar<number>("SELECT COUNT(*) FROM message_templates WHERE kind = 'aftercare' AND approved_by IS NULL AND active = 1");

@@ -9,6 +9,7 @@ import { useI18n } from '@/i18n';
 import { Badge, Button, EmptyState, ErrorState, Loading, Pagination, Panel } from '@/components/ui';
 import { useActions } from '@/layout/actions';
 import type { Paged, PatientListItem } from '@/lib/types';
+import { SegmentBadge } from '@/components/insights';
 import { useEffect, useState } from 'react';
 
 export function PatientsPage() {
@@ -84,7 +85,10 @@ export function PatientsPage() {
                   <tr key={p.id} className="clickable" tabIndex={0} onClick={() => navigate(`/patients/${p.id}`)} onKeyDown={(e) => e.key === 'Enter' && navigate(`/patients/${p.id}`)}>
                     <td>
                       <div className="strong">{p.fullName}</div>
-                      <div className="xs muted">{p.code}</div>
+                      <div className="row wrap" style={{ gap: 4 }}>
+                        <span className="xs muted">{p.code}</span>
+                        <SegmentBadge segment={p.segment} lapsed={p.lapsed} />
+                      </div>
                     </td>
                     <td className="ltr nowrap">{p.phone}</td>
                     <td className="num">{p.age ?? '—'}</td>

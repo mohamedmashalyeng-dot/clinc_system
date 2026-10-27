@@ -1,7 +1,7 @@
 // Permission catalogue shared by the API (enforcement) and the UI (display only).
 // The server is the source of truth: hiding a button in the UI is never the control.
 
-export const ROLES = ['owner', 'receptionist', 'practitioner', 'accountant'] as const;
+export const ROLES = ['owner', 'receptionist', 'practitioner', 'accountant', 'assistant', 'call_center'] as const;
 export type Role = (typeof ROLES)[number];
 
 export const PERMISSIONS = [
@@ -164,6 +164,37 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'reports.financial',
     'reports.operational',
     'inventory.view',
+  ],
+  // Nurse / clinical assistant: front-of-room flow, consents, before/after photos and stock.
+  assistant: [
+    'dashboard.view',
+    'patients.view',
+    'patients.view_all',
+    'appointments.view',
+    'appointments.checkin',
+    'packages.view',
+    'consents.view',
+    'consents.manage',
+    'photos.view',
+    'photos.upload',
+    'inventory.view',
+    'inventory.manage',
+    'followup.view',
+  ],
+  // Call centre & marketing: bookings, reminders, win-back and growth lists — no money, no clinical data.
+  call_center: [
+    'dashboard.view',
+    'patients.view',
+    'patients.view_all',
+    'patients.edit',
+    'appointments.view',
+    'appointments.manage',
+    'packages.view',
+    'followup.view',
+    'followup.manage',
+    'templates.manage',
+    'consents.view',
+    'reports.operational',
   ],
 };
 

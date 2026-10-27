@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { CalendarDays, CalendarOff, CalendarPlus, ChevronLeft, ChevronRight, List, Rows3, Users } from 'lucide-react';
+import { AlertTriangle, CalendarDays, CalendarOff, CalendarPlus, ChevronLeft, ChevronRight, Hourglass, List, Rows3, Users } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useUrlState } from '@/lib/hooks';
 import { useFmt } from '@/lib/format';
@@ -10,12 +10,13 @@ import { Badge, Button, EmptyState, ErrorState, Loading, Pagination, Panel, PayB
 import { useActions } from '@/layout/actions';
 import { ReceptionQueue } from './shared';
 import { TimeOffDetailDialog, TimeOffView, offSegment, useTimeOff, useTimeOffText } from './TimeOff';
+import { WaitlistView } from './Waitlist';
 import type { Appointment, Paged, TimeOff } from '@/lib/types';
 import { APPOINTMENT_STATUSES } from '@shared/domain';
 import { addDays, minutesToTime, startOfWeek, timeToMinutes, weekdayOf } from '@shared/time';
 import type { TKey } from '@/i18n/en';
 
-type View = 'day' | 'week' | 'list' | 'queue' | 'timeoff';
+type View = 'day' | 'week' | 'list' | 'queue' | 'waitlist' | 'timeoff';
 const PX_PER_MIN = 1.3;
 
 export function AppointmentsPage() {
@@ -37,7 +38,7 @@ export function AppointmentsPage() {
     q: '',
     page: '1',
   });
-  const view: View = (['day', 'week', 'list', 'queue', 'timeoff'] as const).find((v) => v === s.view) ?? 'day';
+  const view: View = (['day', 'week', 'list', 'queue', 'waitlist', 'timeoff'] as const).find((v) => v === s.view) ?? 'day';
 
   const filters = (
     <div className="filters">
@@ -91,6 +92,7 @@ export function AppointmentsPage() {
               { id: 'week', label: t('appt.week'), icon: <Rows3 size={14} /> },
               { id: 'list', label: t('appt.list'), icon: <List size={14} /> },
               { id: 'queue', label: t('appt.queue'), icon: <Users size={14} /> },
+              { id: 'waitlist', label: t('wl.short'), icon: <Hourglass size={14} /> },
               { id: 'timeoff', label: t('appt.timeOff'), icon: <CalendarOff size={14} /> },
             ]}
           />
@@ -125,6 +127,7 @@ export function AppointmentsPage() {
           <ReceptionQueue />
         </Panel>
       )}
+      {view === 'waitlist' && <WaitlistView />}
       {view === 'timeoff' && <TimeOffView />}
     </div>
   );
@@ -225,6 +228,7 @@ function ApptBlock({ a, top, height, lane, of, showPractitioner }: { a: Appointm
         aria-label={`${fmt.time(a.startAt)} ${label} · ${ref.serviceName(a.serviceId)} · ${t(`status.${a.status}` as TKey)}`}
       >
         <div className="t">
+          {a.noShowRisk && <AlertTriangle size={11} aria-label={t('risk.short')} style={{ color: a.noShowRisk.level === 'high' ? 'var(--danger)' : 'var(--warning)', verticalAlign: '-1px', marginInlineEnd: 2 }} />}
           {fmt.time(a.startAt)} {label}
         </div>
         {height > 34 && <div className="truncate muted">{ref.serviceName(a.serviceId)}</div>}

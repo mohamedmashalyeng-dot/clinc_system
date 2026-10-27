@@ -2,6 +2,8 @@ import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { GROWTH_TEMPLATES } from './templates.js';
+import { DEFAULT_ROLE_PERMISSIONS } from '../../shared/permissions.js';
 
 export const DATA_DIR = path.resolve(process.env.LUMA_DATA_DIR ?? 'data');
 export const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
@@ -29,6 +31,55 @@ export function openDb(file = path.join(DATA_DIR, 'clinic.db')): DatabaseSync {
 function migrate(d: DatabaseSync): void {
   const hasColumn = (table: string, column: string) => (d.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some((c) => c.name === column);
   for (const table of ['rooms', 'devices']) if (!hasColumn(table, 'name_ar')) d.exec(`ALTER TABLE ${table} ADD COLUMN name_ar TEXT`);
+  // New roles widen the users.role CHECK constraint, which SQLite can only change by rebuilding the table.
+  const usersSql = (d.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'").get() as { sql: string }).sql;
+  if (!usersSql.includes("'call_center'")) {
+    const prefs = hasColumn('users', 'preferences') ? 'preferences' : "'{}'";
+    d.exec('PRAGMA foreign_keys = OFF');
+    try {
+      d.exec(`BEGIN;
+        CREATE TABLE users_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+          password_hash TEXT NOT NULL,
+          role TEXT NOT NULL CHECK (role IN ('owner','receptionist','practitioner','accountant','assistant','call_center')),
+          extra_permissions TEXT NOT NULL DEFAULT '[]',
+          preferences TEXT NOT NULL DEFAULT '{}',
+          active INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          last_login_at TEXT
+        );
+        INSERT INTO users_new(id, name, email, password_hash, role, extra_permissions, preferences, active, created_at, last_login_at)
+          SELECT id, name, email, password_hash, role, extra_permissions, ${prefs}, active, created_at, last_login_at FROM users;
+        DROP TABLE users;
+        ALTER TABLE users_new RENAME TO users;
+        COMMIT;`);
+    } catch (err) {
+      d.exec('ROLLBACK');
+      throw err;
+    } finally {
+      d.exec('PRAGMA foreign_keys = ON');
+    }
+  }
+  // Default permissions for roles added after the database was created (a new database gets them from the seed).
+  if ((d.prepare('SELECT COUNT(*) AS n FROM role_permissions').get() as { n: number }).n > 0) {
+    for (const role of ['assistant', 'call_center'] as const) {
+      if ((d.prepare('SELECT COUNT(*) AS n FROM role_permissions WHERE role = ?').get(role) as { n: number }).n) continue;
+      for (const p of DEFAULT_ROLE_PERMISSIONS[role]) d.prepare('INSERT INTO role_permissions(role, permission) VALUES (?, ?)').run(role, p);
+    }
+  }
+  if (!hasColumn('patients', 'source')) d.exec('ALTER TABLE patients ADD COLUMN source TEXT');
+  if (!hasColumn('patients', 'referred_by_patient_id')) d.exec('ALTER TABLE patients ADD COLUMN referred_by_patient_id INTEGER REFERENCES patients(id)');
+  d.exec('CREATE INDEX IF NOT EXISTS idx_patients_referrer ON patients(referred_by_patient_id)');
+  // Outreach wording for the growth lists. An empty table is a new database: the seed adds them.
+  if ((d.prepare('SELECT COUNT(*) AS n FROM message_templates').get() as { n: number }).n > 0) {
+    const now = new Date().toISOString();
+    for (const tpl of GROWTH_TEMPLATES) {
+      if ((d.prepare('SELECT COUNT(*) AS n FROM message_templates WHERE kind = ?').get(tpl.kind) as { n: number }).n) continue;
+      d.prepare('INSERT INTO message_templates(kind, name, body_en, body_ar, active, created_at, updated_at) VALUES (?,?,?,?,1,?,?)').run(tpl.kind, tpl.name, tpl.en, tpl.ar, now, now);
+    }
+  }
 }
 
 export function closeDb(): void {

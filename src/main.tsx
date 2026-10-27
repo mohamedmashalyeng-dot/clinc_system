@@ -15,10 +15,14 @@ import './styles/base.css';
 import './styles/components.css';
 import './styles/layout.css';
 import './styles/features.css';
+import './styles/themes.css';
 import { I18nProvider } from './i18n';
 import { ToastProvider } from './lib/hooks';
 import { router } from './App';
 import { ApiError } from './lib/api';
+import { applyStoredAppearance } from './lib/theme';
+
+applyStoredAppearance();
 
 const queryClient = new QueryClient({
   defaultOptions: {

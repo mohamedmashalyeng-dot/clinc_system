@@ -4,6 +4,8 @@ import { Loading, ErrorState } from './components/ui';
 import { AppShell } from './layout/AppShell';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { MyDayPage } from './pages/MyDayPage';
+import { START_PAGES } from './layout/Appearance';
 import { AppointmentsPage } from './pages/appointments/AppointmentsPage';
 import { PatientsPage } from './pages/patients/PatientsPage';
 import { PatientProfilePage } from './pages/patients/PatientProfilePage';
@@ -13,6 +15,7 @@ import { BillingPage } from './pages/billing/BillingPage';
 import { PrintInvoicePage, PrintReceiptPage } from './pages/billing/PrintPages';
 import { InventoryPage } from './pages/inventory/InventoryPage';
 import { FollowUpPage } from './pages/followup/FollowUpPage';
+import { GrowthPage } from './pages/growth/GrowthPage';
 import { PhotoGalleryPage } from './pages/photos/PhotoGalleryPage';
 import { ReportsPage } from './pages/reports/ReportsPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
@@ -41,11 +44,12 @@ function Gate({ any, children }: { any: Permission[]; children: React.ReactNode 
   return <>{children}</>;
 }
 
+/** Opens the page the person chose in their preferences; otherwise owners get the dashboard and staff "My day". */
 function Home() {
-  const { can } = useSession();
-  if (can('dashboard.view')) return <DashboardPage />;
-  if (can('appointments.view')) return <Navigate to="/appointments" replace />;
-  return <Navigate to="/patients" replace />;
+  const { can, canAny, me, preferences } = useSession();
+  const chosen = START_PAGES.find((p) => p.path === preferences.startPage && (!p.perms.length || canAny(...p.perms)));
+  const target = chosen?.path ?? (me.user.role === 'owner' && can('dashboard.view') ? '/dashboard' : '/my-day');
+  return <Navigate to={target} replace />;
 }
 
 export const router = createBrowserRouter([
@@ -57,6 +61,8 @@ export const router = createBrowserRouter([
         element: <AppShell />,
         children: [
           { index: true, element: <Home /> },
+          { path: 'my-day', element: <MyDayPage /> },
+          { path: 'dashboard', element: <Gate any={['dashboard.view']}><DashboardPage /></Gate> },
           { path: 'appointments', element: <Gate any={['appointments.view']}><AppointmentsPage /></Gate> },
           { path: 'patients', element: <Gate any={['patients.view']}><PatientsPage /></Gate> },
           { path: 'patients/:id', element: <Gate any={['patients.view']}><PatientProfilePage /></Gate> },
@@ -65,6 +71,7 @@ export const router = createBrowserRouter([
           { path: 'billing', element: <Gate any={['billing.view']}><BillingPage /></Gate> },
           { path: 'inventory', element: <Gate any={['inventory.view']}><InventoryPage /></Gate> },
           { path: 'follow-up', element: <Gate any={['followup.view']}><FollowUpPage /></Gate> },
+          { path: 'growth', element: <Gate any={['followup.view']}><GrowthPage /></Gate> },
           { path: 'photos', element: <Gate any={['photos.view']}><PhotoGalleryPage /></Gate> },
           { path: 'reports', element: <Gate any={['reports.financial', 'reports.operational']}><ReportsPage /></Gate> },
           { path: 'settings', element: <Gate any={['settings.manage', 'staff.manage', 'permissions.manage', 'audit.view']}><SettingsPage /></Gate> },

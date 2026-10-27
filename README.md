@@ -36,6 +36,8 @@ can't connect, start it again.
 | Receptionist | `reception@luma.demo` (also `reception2@luma.demo`) | `demo1234` |
 | Practitioner | `dr.nour@luma.demo` (also `dr.karim@luma.demo`, `salma@luma.demo`) | `demo1234` |
 | Accountant | `accounts@luma.demo` | `demo1234` |
+| Nurse / Assistant | `assistant@luma.demo` | `demo1234` |
+| Call centre & Marketing | `callcenter@luma.demo` | `demo1234` |
 
 Other commands:
 
@@ -65,6 +67,44 @@ Clinic currency (default **EGP**), time zone (default **Africa/Cairo**), tax rat
 booking grid and cancellation rules are set in the app under **Settings**. Rooms and devices have an
 English and an Arabic name (**Settings → Rooms & devices**); an empty Arabic name falls back to the
 English one. A database created by an earlier build is upgraded in place on start.
+
+## Growth and day-to-day tools
+
+Everything below is derived from records the clinic already keeps — nothing is entered twice.
+
+- **My day** (`/my-day`) — each person's home page: the jobs waiting for *them*, chosen by their
+  permissions (so a customised role gets the matching list). Reception sees arrivals to check in,
+  tomorrow's bookings to confirm, bookings at risk of no-show, deposits and balances to collect and
+  the cash drawer to count; practitioners see patients waiting for them and treatment records left
+  unfinished; accounts see overdue installments and deposits awaiting a decision; and so on.
+- **Growth centre** (`/growth`) — revenue the clinic can recover this week: prepaid sessions nobody
+  has booked (with their value), treatments due again (interval from the treatment plan, or learned
+  from how often this clinic's patients repeat each service), lapsed patients ranked by lifetime
+  value, packages about to run out, birthdays, and balances to collect at an upcoming visit. Each row
+  opens a bilingual message from an editable template, ready in **WhatsApp click-to-chat** (staff
+  press send), and the contact is logged so nobody calls the same patient twice. Lists export to CSV.
+- **Patient value & loyalty** — every profile shows lifetime value, visits, usual gap between visits,
+  attendance and a segment (VIP = top 10% by lifetime spend, loyal, new, lapsed). Definitions are
+  shown in the app.
+- **No-show risk** — upcoming bookings of patients with missed or late-cancelled appointments are
+  flagged on the diary, queue and appointment, with the reasons and a prompt to confirm or take a
+  deposit. The rules are simple and explainable (`server/services/insights.ts`).
+- **Smart waitlist** (Appointments → Waitlist) — patients who want a sooner or specific time, with
+  preferred practitioner, dates and time of day. Each entry shows the earliest free slot that fits,
+  checked live against the diary and time off; a cancelled booking lists the waiting patients who can
+  take its time; booking the patient closes their entry automatically.
+- **Day close** (Billing → Day close) — end-of-day cash count. The server computes what should be in
+  the drawer (opening float + cash received − cash refunds − cash expenses) and the card/transfer
+  totals to match against the terminal; any difference needs a note, a re-count keeps the earlier
+  count, and days with payments left uncounted raise a reminder.
+- **Marketing attribution** — each patient records how they found the clinic and who referred them.
+  Reports → Marketing shows new patients, conversion and revenue by source, cost per new patient and
+  return on marketing spend, and the top referring patients.
+- **Appearance & preferences** (user menu, or the sun/moon button) — light, dark or follow-device
+  theme, accent colour, compact density, larger text and the page to open after sign-in, saved to
+  each person's account. The owner sets the clinic colour under Settings → Clinic details.
+- **Quick search** — <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>K</kbd> opens a palette to jump to any page,
+  start a common task or open a patient; <kbd>/</kbd> focuses patient search.
 
 ## How it fits together
 
@@ -124,18 +164,21 @@ Permissions are enforced by the API; the UI hides what a role cannot use. The Ow
 permissions (with a reason, audited) under **Settings → Roles & permissions**, and grant extra
 permissions to an individual (e.g. an owner who also treats patients).
 
-| | Owner/Admin | Receptionist | Practitioner | Accountant |
-|---|:-:|:-:|:-:|:-:|
-| Patient contact details | ✔ | ✔ | assigned only | ✔ (read) |
-| Medical history, treatment notes, clinical photos | — | — | ✔ | — |
-| Book / reschedule / cancel, check-in | ✔ | ✔ | check-in | — |
-| Treatment workspace | — | — | ✔ | — |
-| Sell packages / record payments | ✔ | ✔ | — | payments |
-| Discounts, refunds, invoice adjustments, expenses | ✔ | — | — | ✔ |
-| Reverse a completed session, adjust packages | ✔ | — | — | — |
-| Inventory (manage / override) | ✔ | view | view | view |
-| Financial reports | ✔ | — | — | ✔ |
-| Settings, staff, permissions, audit log | ✔ | — | — | — |
+| | Owner/Admin | Receptionist | Practitioner | Accountant | Nurse/Assistant | Call centre |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| Patient contact details | ✔ | ✔ | assigned only | ✔ (read) | ✔ (read) | ✔ |
+| Medical history, treatment notes | — | — | ✔ | — | — | — |
+| Clinical photos (before/after) | — | — | ✔ | — | ✔ | — |
+| Book / reschedule / cancel, waitlist | ✔ | ✔ | — | — | — | ✔ |
+| Check-in | ✔ | ✔ | ✔ | — | ✔ | — |
+| Treatment workspace | — | — | ✔ | — | — | — |
+| Sell packages / record payments, day close | ✔ | ✔ | — | payments | — | — |
+| Discounts, refunds, invoice adjustments, expenses | ✔ | — | — | ✔ | — | — |
+| Reverse a completed session, adjust packages | ✔ | — | — | — | — | — |
+| Follow-up, growth centre, message templates | ✔ | ✔ (no templates) | ✔ (no templates) | — | view | ✔ |
+| Inventory (manage / override) | ✔ | view | view | view | manage | — |
+| Financial reports | ✔ | — | — | ✔ | — | — |
+| Settings, staff, permissions, audit log | ✔ | — | — | — | — | — |
 
 ## Acceptance scenario
 
@@ -161,7 +204,10 @@ non-package visit, and that the audit log records sensitive access without clini
 test covers practitioner time off: practitioners cannot record it, existing bookings must be
 acknowledged (and stay booked), overlapping time off is refused, bookings and free slots in the period
 are blocked with an explanation, other clinicians do not see the reason, and cancelling (with a
-reason, retry-safe) frees the diary again.
+reason, retry-safe) frees the diary again. `tests/growth.test.ts` covers the growth centre (and its
+permission scoping), patient insights and no-show risk, referral attribution, the waitlist (earliest
+slot, freed-slot matches, auto-close on booking), the day close (server-computed, idempotent,
+re-counts kept), personal preferences, and the new roles' defaults and "My day" tasks.
 
 To walk through it in the UI: sign in as **Receptionist** → *Add patient* → patient page →
 *Consents* (record treatment consent) → *Sell package* (Laser Full Legs – 6) with a part payment →
@@ -175,7 +221,8 @@ remaining with the ledger entry, *Inventory → Stock movements* shows one usage
 Not connected in this build (the UI says so wherever it matters and never reports otherwise):
 
 - **WhatsApp, SMS, email.** Reminders and follow-ups are *prepared* from bilingual templates for
-  staff to copy and send themselves, then the outcome is logged. Nothing is sent or marked as sent.
+  staff to copy and send themselves (WhatsApp messages open in WhatsApp click-to-chat, where staff
+  press send), then the outcome is logged. Nothing is sent or marked as sent by the system.
 - **Online payments.** Payments are records of money already received (cash, card terminal, bank
   transfer). No card data is collected or charged.
 - **Cloud storage.** Photos and documents live on the server's disk under `data/uploads/`.

@@ -8,10 +8,12 @@ import {
   CONSENT_TYPES,
   DOCUMENT_CATEGORIES,
   EXPENSE_CATEGORIES,
+  PATIENT_SOURCES,
   PAYMENT_METHODS,
   PHOTO_KINDS,
   TEMPLATE_KINDS,
   TIME_OFF_KINDS,
+  WAITLIST_TIMES,
 } from './domain.js';
 import { ROLES } from './permissions.js';
 
@@ -64,6 +66,11 @@ export const patientSchema = z.object({
   allowMarketing: z.boolean().default(false),
   primaryPractitionerId: optionalId,
   adminNotes: optionalText(1000),
+  source: z
+    .union([z.enum(PATIENT_SOURCES), z.literal(''), z.null()])
+    .optional()
+    .transform((v) => v || null),
+  referredByPatientId: optionalId,
 });
 export type PatientInput = z.infer<typeof patientSchema>;
 
@@ -402,8 +409,23 @@ export const settingsSchema = z.object({
   }),
   packageExpiryWarningDays: z.number().int().min(1).max(180),
   expiryWarningDays: z.number().int().min(1).max(365),
+  /** Clinic brand colour used as the default accent for everyone. */
+  brandColor: z
+    .union([z.string().regex(/^#[0-9a-fA-F]{6}$/), z.literal(''), z.null()])
+    .optional()
+    .transform((v) => v || null),
 });
 export type SettingsInput = z.infer<typeof settingsSchema>;
+
+/** Per-user appearance and start page. Unknown or missing values fall back to the defaults. */
+export const preferencesSchema = z.object({
+  theme: z.enum(['system', 'light', 'dark']).catch('system'),
+  accent: z.union([z.string().regex(/^#[0-9a-fA-F]{6}$/), z.null()]).catch(null),
+  density: z.enum(['comfortable', 'compact']).catch('comfortable'),
+  textSize: z.enum(['normal', 'large']).catch('normal'),
+  startPage: z.union([z.string().regex(/^\/[a-z-]*$/).max(40), z.null()]).catch(null),
+});
+export type Preferences = z.infer<typeof preferencesSchema>;
 
 export const staffSchema = z.object({
   name: required(100),
@@ -434,3 +456,28 @@ export const documentMetaSchema = z.object({
 });
 
 export const followUpUpdateSchema = z.object({ status: z.enum(['done', 'dismissed']), note: optionalText(300) });
+
+export const waitlistSchema = z
+  .object({
+    patientId: id,
+    serviceId: id,
+    practitionerId: optionalId,
+    earliestDate: dateStr,
+    latestDate: dateStr,
+    timeOfDay: z.enum(WAITLIST_TIMES).default('any'),
+    notes: optionalText(300),
+  })
+  .superRefine((d, ctx) => {
+    if (d.latestDate < d.earliestDate) ctx.addIssue({ code: 'custom', path: ['latestDate'], message: 'end_before_start' });
+    else if (d.latestDate > addDays(d.earliestDate, 180)) ctx.addIssue({ code: 'custom', path: ['latestDate'], message: 'range_too_long' });
+  });
+export type WaitlistInput = z.infer<typeof waitlistSchema>;
+export const waitlistRemoveSchema = z.object({ reason: required(300) });
+
+export const dayCloseSchema = z.object({
+  date: dateStr,
+  openingFloat: money.default(0),
+  countedCash: money,
+  notes: optionalText(500),
+  idempotencyKey,
+});

@@ -11,6 +11,8 @@ import { Badge, Button, Callout, ErrorState, KV, Loading, PayBadge, StatusBadge,
 import { Dialog, Drawer } from '@/components/overlays';
 import { useActions } from '@/layout/actions';
 import { useStartTreatment, useStatusChange } from './shared';
+import { WaitlistMatches } from './Waitlist';
+import { useRiskText } from '@/components/insights';
 import type { Appointment } from '@/lib/types';
 import type { TKey } from '@/i18n/en';
 import { STATUS_TRANSITIONS } from '@shared/domain';
@@ -40,6 +42,7 @@ export function AppointmentDrawer({ id, onClose }: { id: number; onClose: () => 
   const isToday = a ? fmt.localDate(a.startAt) === fmt.today() : false;
   const started = a ? new Date(a.startAt).getTime() <= Date.now() : false;
   const svc = a ? ref.services.get(a.serviceId) : undefined;
+  const riskText = useRiskText();
 
   return (
     <Drawer
@@ -97,6 +100,13 @@ export function AppointmentDrawer({ id, onClose }: { id: number; onClose: () => 
               )}
             </div>
           )}
+
+          {a.noShowRisk && (
+            <Callout tone="warning" title={a.noShowRisk.level === 'high' ? t('risk.high') : t('risk.medium')}>
+              {riskText(a.noShowRisk)}. {t('risk.advice')}
+            </Callout>
+          )}
+          {a.status === 'cancelled' && !a.masked && <WaitlistMatches appointmentId={a.id} />}
 
           <KV
             items={[

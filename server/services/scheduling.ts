@@ -331,6 +331,66 @@ export function findAlternatives(req: SlotRequest, limit = 6): Alternative[] {
   return results.slice(0, limit);
 }
 
+/**
+ * Earliest bookable slot for a service between two dates (used by the waitlist). Tries the preferred
+ * practitioner only when one is given, otherwise every qualified practitioner.
+ */
+export function findFirstSlot(opts: {
+  serviceId: number;
+  practitionerId: number | null;
+  fromDate: string;
+  toDate: string;
+  patientId?: number | null;
+  accept?: (time: string) => boolean;
+}): Alternative | null {
+  const settings = getSettings();
+  const tz = settings.timezone;
+  const service = getService(opts.serviceId);
+  if (!service || !service.active) return null;
+  const { rooms, devices } = eligibleResources(service, null, null);
+  if (!rooms.length || (service.deviceIds.length && !devices.length)) return null;
+  const practitioners = listPractitioners().filter((p) => qualified(p, service) && (!opts.practitionerId || p.id === opts.practitionerId));
+  if (!practitioners.length) return null;
+  const loaded = preload(zonedToUtc(opts.fromDate, '00:00', tz).toISOString(), zonedToUtc(addDays(opts.toDate, 1), '00:00', tz).toISOString());
+  const step = settings.slotMinutes || 15;
+  const earliest = Date.now() + 10 * 60000;
+  for (let date = opts.fromDate; date <= opts.toDate; date = addDays(date, 1)) {
+    const wd = weekdayOf(date);
+    const day = settings.openingHours[wd];
+    if (!day?.open) continue;
+    const working = practitioners.filter((p) => p.hours[wd]?.open);
+    for (let m = timeToMinutes(day.start); m + service.durationMin <= timeToMinutes(day.end); m += step) {
+      const time = minutesToTime(m);
+      if (opts.accept && !opts.accept(time)) continue;
+      if (zonedToUtc(date, time, tz).getTime() < earliest) continue;
+      for (const p of working) {
+        const alt = firstFit({ serviceId: service.id, practitionerId: p.id, date, time, patientId: opts.patientId ?? null }, rooms.map((r) => r.id), devices.map((d) => d.id), loaded);
+        if (alt) return { ...alt, samePractitioner: p.id === opts.practitionerId };
+      }
+    }
+  }
+  return null;
+}
+
+/** Whether a service fits a freed practitioner slot (same start), trying the freed room/device first. */
+export function slotFits(req: { serviceId: number; practitionerId: number; date: string; time: string; patientId: number; preferRoom: number; preferDevice: number | null }): Alternative | null {
+  const service = getService(req.serviceId);
+  if (!service) return null;
+  const { rooms, devices } = eligibleResources(service, req.preferRoom, req.preferDevice);
+  if (!rooms.length || (service.deviceIds.length && !devices.length)) return null;
+  return firstFit(req, rooms.map((r) => r.id), devices.map((d) => d.id));
+}
+
+function firstFit(req: { serviceId: number; practitionerId: number; date: string; time: string; patientId: number | null }, roomIds: number[], deviceIds: number[], loaded?: Preloaded): Alternative | null {
+  for (const roomId of roomIds) {
+    for (const deviceId of deviceIds.length ? deviceIds : [null]) {
+      const { issues } = evaluateSlot({ ...req, roomId, deviceId }, loaded);
+      if (!issues.length) return { date: req.date, time: req.time, practitionerId: req.practitionerId, roomId, deviceId, samePractitioner: true };
+    }
+  }
+  return null;
+}
+
 /** Free start times for one practitioner on a date (used by the booking form). */
 export function freeSlots(serviceId: number, practitionerId: number, date: string): { time: string; roomId: number; deviceId: number | null }[] {
   const settings = getSettings();

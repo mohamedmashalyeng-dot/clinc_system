@@ -33,6 +33,7 @@ interface DashboardData {
     packageWindowEnd?: string;
     lowStock?: number;
     expiringBatches?: number;
+    unbookedPackages?: number;
   };
   schedule: Appointment[];
 }
@@ -124,6 +125,9 @@ export function DashboardPage() {
               sub={m.packageWindowEnd ? t('dash.packagesExpiringSub', { date: fmt.day(m.packageWindowEnd) }) : undefined}
               onClick={() => navigate(`/follow-up?tab=packages&until=${range.to}`)}
             />
+          )}
+          {m.unbookedPackages !== undefined && (
+            <Metric label={t('dash.unbooked')} value={fmt.num(m.unbookedPackages)} sub={t('dash.unbookedSub')} tone={m.unbookedPackages ? 'warning' : undefined} onClick={() => navigate('/growth?tab=unbooked')} />
           )}
           {m.lowStock !== undefined && <Metric label={t('dash.lowStock')} value={fmt.num(m.lowStock)} tone={m.lowStock ? 'danger' : undefined} onClick={() => navigate('/inventory?filter=low')} />}
           {m.expiringBatches !== undefined && (
